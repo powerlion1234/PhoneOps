@@ -84,7 +84,7 @@ object OverlayManager {
         val updated = current.copy(
             points = newPoints.ifEmpty { current.points },
             selectedIndex = selectedIndex.coerceIn(0, (newPoints.size - 1).coerceAtLeast(0)),
-            intervalMs = intervalMs.coerceAtLeast(25L),
+            intervalMs = intervalMs.coerceAtLeast(30L),
             maxCycles = maxCycles,
             maxDurationMs = maxDurationMs,
             jitterPx = jitterPx.coerceAtLeast(0),
@@ -118,8 +118,8 @@ object OverlayManager {
             initialConfig.points.mapIndexed { idx, p ->
                 ClickPoint(
                     id = idx + 1,
-                    x = p.x.coerceIn(36f, (metrics.widthPixels - 36).toFloat()),
-                    y = p.y.coerceIn(72f, (metrics.heightPixels - 72).toFloat()),
+                    x = p.x.coerceIn(44f, (metrics.widthPixels - 44).toFloat()),
+                    y = p.y.coerceIn(88f, (metrics.heightPixels - 88).toFloat()),
                     isSwipe = p.isSwipe,
                     endX = p.endX,
                     endY = p.endY,
@@ -143,50 +143,51 @@ object OverlayManager {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        val circleSizePx = (48 * metrics.density).toInt()
+        // Größeres Zielkreuz und größere Steuerleiste für bequeme Bedienung
+        val circleSizePx = (62 * metrics.density).toInt()
         val accent = activeConfig.accentHex
 
         val statusLabel = TextView(appCtx).apply {
             text = "P${activeConfig.selectedIndex + 1}/${activeConfig.points.size}"
             setTextColor(Color.WHITE)
-            textSize = 11f
-            setPadding(8, 0, 8, 0)
+            textSize = 13f
+            setPadding(12, 0, 12, 0)
         }
 
         val toggleBtn = Button(appCtx).apply {
             text = "START"
-            textSize = 11f
+            textSize = 13f
             setTextColor(Color.BLACK)
             setBackgroundColor(accent)
             minWidth = 0
             minimumWidth = 0
             minHeight = 0
             minimumHeight = 0
-            setPadding(14, 8, 14, 8)
+            setPadding(22, 14, 22, 14)
         }
 
         val gearBtn = Button(appCtx).apply {
             text = "⚙"
-            textSize = 12f
+            textSize = 15f
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.rgb(34, 38, 52))
+            setBackgroundColor(Color.rgb(36, 41, 56))
             minWidth = 0
             minimumWidth = 0
             minHeight = 0
             minimumHeight = 0
-            setPadding(12, 8, 12, 8)
+            setPadding(18, 14, 18, 14)
         }
 
         val closeBtn = Button(appCtx).apply {
             text = "✕"
-            textSize = 11f
+            textSize = 14f
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.rgb(62, 20, 26))
+            setBackgroundColor(Color.rgb(72, 22, 28))
             minWidth = 0
             minimumWidth = 0
             minHeight = 0
             minimumHeight = 0
-            setPadding(12, 8, 12, 8)
+            setPadding(18, 14, 18, 14)
         }
 
         fun pushSync(actionCount: Int = 0) {
@@ -209,12 +210,12 @@ object OverlayManager {
                 val tv = TextView(appCtx).apply {
                     text = if (pt.isSwipe) "${pt.id}↔" else "${pt.id}"
                     setTextColor(if (isSelected) Color.BLACK else Color.WHITE)
-                    textSize = 14f
+                    textSize = 16f
                     gravity = Gravity.CENTER
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(if (isSelected) accent else Color.argb(155, 16, 18, 25))
-                        setStroke((3 * metrics.density).toInt(), accent)
+                        setColor(if (isSelected) accent else Color.argb(175, 16, 18, 25))
+                        setStroke((4 * metrics.density).toInt(), accent)
                     }
                 }
 
@@ -301,10 +302,10 @@ object OverlayManager {
             val hintBox = TextView(appCtx).apply {
                 text = "Jetzt auf dem Bildschirm wischen (Start -> Ziel)..."
                 setTextColor(Color.WHITE)
-                textSize = 14f
+                textSize = 15f
                 gravity = Gravity.CENTER
-                setPadding(24, 24, 24, 24)
-                setBackgroundColor(Color.argb(140, 10, 12, 18))
+                setPadding(28, 28, 28, 28)
+                setBackgroundColor(Color.argb(165, 10, 12, 18))
                 setOnTouchListener { _, ev ->
                     when (ev.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
@@ -323,7 +324,7 @@ object OverlayManager {
                                     isSwipe = true,
                                     endX = upX,
                                     endY = upY,
-                                    swipeDurationMs = 240L
+                                    swipeDurationMs = 220L
                                 )
                                 config = curCfg.copy(points = mutable)
                                 removeSwipeCapture()
@@ -365,45 +366,36 @@ object OverlayManager {
 
             val panel = LinearLayout(appCtx).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(22, 18, 22, 18)
+                setPadding(26, 22, 26, 22)
                 background = GradientDrawable().apply {
-                    cornerRadius = 24f
-                    setColor(Color.argb(245, 15, 17, 24))
-                    setStroke((2 * metrics.density).toInt(), accent)
+                    cornerRadius = 28f
+                    setColor(Color.argb(248, 15, 17, 24))
+                    setStroke((2.5f * metrics.density).toInt(), accent)
                 }
             }
 
-            val titleTv = TextView(appCtx).apply {
-                text = "Overlay-Einstellungen • Punkt ${idx + 1}"
+            panel.addView(TextView(appCtx).apply {
+                text = "Overlay-Menü • Punkt ${idx + 1} (${curCfg.intervalMs} ms)"
                 setTextColor(Color.WHITE)
-                textSize = 14f
-                setPadding(0, 0, 0, 10)
-            }
-            panel.addView(titleTv)
-
-            val intervalTv = TextView(appCtx).apply {
-                text = "Intervall: ${curCfg.intervalMs} ms"
-                setTextColor(Color.LTGRAY)
-                textSize = 12f
-                setPadding(0, 0, 0, 6)
-            }
-            panel.addView(intervalTv)
+                textSize = 15f
+                setPadding(0, 0, 0, 12)
+            })
 
             val intervalRow = LinearLayout(appCtx).apply {
                 orientation = LinearLayout.HORIZONTAL
-                setPadding(0, 0, 0, 10)
+                setPadding(0, 0, 0, 12)
             }
-            listOf(100L to "100ms", 500L to "500ms", 1000L to "1s", 3000L to "3s").forEach { (ms, label) ->
-                val b = Button(appCtx).apply {
+            listOf(100L to "100ms", 300L to "300ms", 1000L to "1s", 3000L to "3s").forEach { (ms, label) ->
+                intervalRow.addView(Button(appCtx).apply {
                     text = label
-                    textSize = 11f
+                    textSize = 12f
                     setTextColor(if (curCfg.intervalMs == ms) Color.BLACK else Color.WHITE)
-                    setBackgroundColor(if (curCfg.intervalMs == ms) accent else Color.rgb(34, 38, 52))
+                    setBackgroundColor(if (curCfg.intervalMs == ms) accent else Color.rgb(36, 41, 56))
                     minWidth = 0
                     minimumWidth = 0
                     minHeight = 0
                     minimumHeight = 0
-                    setPadding(12, 8, 12, 8)
+                    setPadding(14, 10, 14, 10)
                     setOnClickListener {
                         val latest = config ?: return@setOnClickListener
                         config = latest.copy(intervalMs = ms)
@@ -411,25 +403,24 @@ object OverlayManager {
                         openOverlaySettings()
                         pushSync()
                     }
-                }
-                intervalRow.addView(b)
+                })
             }
             panel.addView(intervalRow)
 
             val modeRow = LinearLayout(appCtx).apply {
                 orientation = LinearLayout.HORIZONTAL
-                setPadding(0, 0, 0, 10)
+                setPadding(0, 0, 0, 12)
             }
-            val tapModeBtn = Button(appCtx).apply {
-                text = if (pt.isSwipe) "Zu Tap wechseln" else "Tap aktiv"
-                textSize = 11f
+            modeRow.addView(Button(appCtx).apply {
+                text = if (pt.isSwipe) "Tap-Modus" else "Tap aktiv"
+                textSize = 12f
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.rgb(34, 38, 52))
+                setBackgroundColor(Color.rgb(36, 41, 56))
                 minWidth = 0
                 minimumWidth = 0
                 minHeight = 0
                 minimumHeight = 0
-                setPadding(12, 8, 12, 8)
+                setPadding(14, 10, 14, 10)
                 setOnClickListener {
                     val latest = config ?: return@setOnClickListener
                     val mutable = latest.points.toMutableList()
@@ -440,26 +431,24 @@ object OverlayManager {
                     openOverlaySettings()
                     pushSync()
                 }
-            }
-            val recordSwipeBtn = Button(appCtx).apply {
+            })
+            modeRow.addView(Button(appCtx).apply {
                 text = "Selbst swipen"
-                textSize = 11f
+                textSize = 12f
                 setTextColor(Color.BLACK)
                 setBackgroundColor(accent)
                 minWidth = 0
                 minimumWidth = 0
                 minHeight = 0
                 minimumHeight = 0
-                setPadding(14, 8, 14, 8)
+                setPadding(16, 10, 16, 10)
                 setOnClickListener { startSwipeRecording() }
-            }
-            modeRow.addView(tapModeBtn)
-            modeRow.addView(recordSwipeBtn)
+            })
             panel.addView(modeRow)
 
             val dirRow = LinearLayout(appCtx).apply {
                 orientation = LinearLayout.HORIZONTAL
-                setPadding(0, 0, 0, 12)
+                setPadding(0, 0, 0, 14)
             }
             fun applyDirection(dx: Float, dy: Float) {
                 val latest = config ?: return
@@ -469,7 +458,7 @@ object OverlayManager {
                     isSwipe = true,
                     endX = (curP.x + dx).coerceIn(20f, (metrics.widthPixels - 20).toFloat()),
                     endY = (curP.y + dy).coerceIn(40f, (metrics.heightPixels - 40).toFloat()),
-                    swipeDurationMs = 240L
+                    swipeDurationMs = 220L
                 )
                 config = latest.copy(points = mutable)
                 rebuildCircles()
@@ -481,35 +470,34 @@ object OverlayManager {
                 "← Links" to (-350f to 0f),
                 "→ Rechts" to (350f to 0f)
             ).forEach { (lbl, delta) ->
-                val db = Button(appCtx).apply {
+                dirRow.addView(Button(appCtx).apply {
                     text = lbl
-                    textSize = 11f
+                    textSize = 12f
                     setTextColor(Color.WHITE)
-                    setBackgroundColor(Color.rgb(42, 46, 62))
+                    setBackgroundColor(Color.rgb(44, 49, 66))
                     minWidth = 0
                     minimumWidth = 0
                     minHeight = 0
                     minimumHeight = 0
-                    setPadding(10, 8, 10, 8)
+                    setPadding(12, 10, 12, 10)
                     setOnClickListener { applyDirection(delta.first, delta.second) }
-                }
-                dirRow.addView(db)
+                })
             }
             panel.addView(dirRow)
 
             val bottomRow = LinearLayout(appCtx).apply {
                 orientation = LinearLayout.HORIZONTAL
             }
-            val addBtn = Button(appCtx).apply {
+            bottomRow.addView(Button(appCtx).apply {
                 text = "+ Punkt"
-                textSize = 11f
+                textSize = 12f
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.rgb(34, 38, 52))
+                setBackgroundColor(Color.rgb(36, 41, 56))
                 minWidth = 0
                 minimumWidth = 0
                 minHeight = 0
                 minimumHeight = 0
-                setPadding(12, 8, 12, 8)
+                setPadding(14, 10, 14, 10)
                 setOnClickListener {
                     val latest = config ?: return@setOnClickListener
                     if (latest.points.size >= 8) return@setOnClickListener
@@ -517,7 +505,7 @@ object OverlayManager {
                     val updatedList = latest.points + ClickPoint(
                         id = nextId,
                         x = metrics.widthPixels / 2f,
-                        y = (metrics.heightPixels / 2f) + nextId * 70f
+                        y = (metrics.heightPixels / 2f) + nextId * 75f
                     )
                     config = latest.copy(points = updatedList, selectedIndex = updatedList.lastIndex)
                     rebuildCircles()
@@ -525,21 +513,19 @@ object OverlayManager {
                     openOverlaySettings()
                     pushSync()
                 }
-            }
-            val doneBtn = Button(appCtx).apply {
+            })
+            bottomRow.addView(Button(appCtx).apply {
                 text = "Fertig"
-                textSize = 11f
+                textSize = 12f
                 setTextColor(Color.BLACK)
                 setBackgroundColor(accent)
                 minWidth = 0
                 minimumWidth = 0
                 minHeight = 0
                 minimumHeight = 0
-                setPadding(16, 8, 16, 8)
+                setPadding(20, 10, 20, 10)
                 setOnClickListener { removeSettingsDialog() }
-            }
-            bottomRow.addView(addBtn)
-            bottomRow.addView(doneBtn)
+            })
             panel.addView(bottomRow)
 
             val dParams = WindowManager.LayoutParams(
@@ -565,11 +551,11 @@ object OverlayManager {
         val barLayout = LinearLayout(appCtx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(10, 8, 10, 8)
+            setPadding(14, 12, 14, 12)
             background = GradientDrawable().apply {
-                cornerRadius = 24f
-                setColor(Color.argb(242, 14, 16, 22))
-                setStroke((1.5f * metrics.density).toInt(), accent)
+                cornerRadius = 28f
+                setColor(Color.argb(245, 14, 16, 22))
+                setStroke((2 * metrics.density).toInt(), accent)
             }
             addView(statusLabel)
             addView(toggleBtn)
@@ -587,7 +573,7 @@ object OverlayManager {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = (16 * metrics.density).toInt()
-            y = (130 * metrics.density).toInt()
+            y = (140 * metrics.density).toInt()
         }
 
         var barOffsetX = 0f
@@ -601,9 +587,9 @@ object OverlayManager {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     cParams.x = (event.rawX + barOffsetX).toInt()
-                        .coerceIn(0, (metrics.widthPixels - 240).coerceAtLeast(0))
+                        .coerceIn(0, (metrics.widthPixels - 280).coerceAtLeast(0))
                     cParams.y = (event.rawY + barOffsetY).toInt()
-                        .coerceIn(0, (metrics.heightPixels - 120).coerceAtLeast(0))
+                        .coerceIn(0, (metrics.heightPixels - 140).coerceAtLeast(0))
                     try {
                         wm.updateViewLayout(v, cParams)
                     } catch (_: Exception) {
@@ -611,6 +597,21 @@ object OverlayManager {
                     true
                 }
                 else -> false
+            }
+        }
+
+        AutoTapService.instance?.setStateListener { running, reason ->
+            if (!running) {
+                isRunning = false
+                toggleBtn.text = "START"
+                val snap = config
+                if (snap != null) {
+                    statusLabel.text = "P${snap.selectedIndex + 1}/${snap.points.size}"
+                }
+                pushSync()
+                if (reason != null) {
+                    hideOverlay(stopService = false)
+                }
             }
         }
 
@@ -622,7 +623,7 @@ object OverlayManager {
                 return@setOnClickListener
             }
             if (isRunning) {
-                svc.stopAutoTap()
+                svc.stopAutoTap(reason = null)
                 isRunning = false
                 toggleBtn.text = "START"
                 statusLabel.text = "P${latest.selectedIndex + 1}/${latest.points.size}"
@@ -641,7 +642,7 @@ object OverlayManager {
                         statusLabel.text = "#$total P${idx + 1}"
                         pushSync(total)
                     },
-                    onFinished = {
+                    onFinished = { _ ->
                         isRunning = false
                         toggleBtn.text = "START"
                         statusLabel.text = "P${latest.selectedIndex + 1}/${latest.points.size}"
@@ -670,8 +671,9 @@ object OverlayManager {
     }
 
     fun hideOverlay(stopService: Boolean = true) {
+        AutoTapService.instance?.setStateListener(null)
         if (stopService) {
-            AutoTapService.instance?.stopAutoTap()
+            AutoTapService.instance?.stopAutoTap(reason = null)
         }
         isRunning = false
         val wm = windowManager
