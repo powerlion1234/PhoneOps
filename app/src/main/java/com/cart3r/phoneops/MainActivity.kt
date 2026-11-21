@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -56,19 +57,23 @@ enum class AccentTheme(val label: String, val color: Color) {
 
 enum class StopMode(val label: String) {
     INFINITE("Endlos"),
-    CYCLES("Klick-Anzahl"),
-    DURATION("Zeitdauer (s)")
+    CYCLES("Zyklen"),
+    DURATION("Sekunden")
 }
 
-sealed class MacroStep(val description: String) {
-    data class WaitStep(val ms: Long) : MacroStep("Warte ${ms} ms")
-    data class TapStep(val x: Float, val y: Float) : MacroStep("Klick auf (${x.toInt()}, ${y.toInt()})")
+sealed class MacroStep(val label: String) {
+    data class WaitStep(val ms: Long) : MacroStep("Warten ${ms} ms")
+    data class TapStep(val x: Float, val y: Float) : MacroStep("Klick (${x.toInt()}, ${y.toInt()})")
+    data class SwipeStep(val x1: Float, val y1: Float, val x2: Float, val y2: Float, val ms: Long) :
+        MacroStep("Wischen (${x1.toInt()},${y1.toInt()}) -> (${x2.toInt()},${y2.toInt()})")
     data class TorchStep(val enabled: Boolean) : MacroStep(if (enabled) "Taschenlampe AN" else "Taschenlampe AUS")
-    data class SettingsStep(val title: String, val action: String) : MacroStep("Öffne $title")
-    data object LockScreenStep : MacroStep("Bildschirm sperren")
+    data class SettingsStep(val title: String, val action: String) : MacroStep("Einstellung: $title")
+    data object HomeStep : MacroStep("System: Home")
+    data object BackStep : MacroStep("System: Zurück")
+    data object LockScreenStep : MacroStep("System: Sperren")
 }
 
-data class AutomationMacro(
+data class CustomMacro(
     val id: String,
     val name: String,
     val repeatTimes: Int = 1,
@@ -82,77 +87,82 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            OverrideApp()
+            OverrideApp(activity = this)
         }
     }
 }
 
 @Composable
-fun OverrideApp() {
+fun OverrideApp(activity: ComponentActivity) {
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     var tab by remember { mutableIntStateOf(0) }
     var accentTheme by remember { mutableStateOf(AccentTheme.CRIMSON) }
     var compactCards by remember { mutableStateOf(false) }
+    var keepScreenOn by remember { mutableStateOf(false) }
 
     var torchOn by remember { mutableStateOf(false) }
     var statusMsg by remember { mutableStateOf("Bereit") }
     var macroRunning by remember { mutableStateOf(false) }
 
-    // Auto-Clicker state (synchron mit ziehbarem Zielkreis)
-    var tapX by remember { mutableStateOf("540") }
-    var tapY by remember { mutableStateOf("1100") }
+    // Auto-Clicker + Multi-Points + Swipe + Anti-Jitter
+    var points by remember {
+        mutableStateOf(
+            listOf(
+                ClickPoint(1, 540f, 1100f),
+                ClickPoint(2, 540f, 1450f, isSwipe = true, endX = 540f, endY = 850f, swipeDurationMs = 250L)
+            )
+        )
+    }
+    var selectedPointIdx by remember { mutableIntStateOf(0) }
     var intervalValue by remember { mutableStateOf("500") }
     var useSeconds by remember { mutableStateOf(false) }
     var stopMode by remember { mutableStateOf(StopMode.INFINITE) }
-    var stopValue by remember { mutableStateOf("20") }
-    var tapCount by remember { mutableIntStateOf(0) }
+    var stopValue by remember { mutableStateOf("10") }
+    var jitterPx by remember { mutableStateOf("0") }
+    var actionCount by remember { mutableIntStateOf(0) }
     var overlayActive by remember { mutableStateOf(OverlayManager.isOverlayVisible()) }
     var autoTapRunning by remember { mutableStateOf(false) }
 
-    // Echte Mehr-Schritt-Macros
-    var customMacros by remember {
+    // Voll customizierbare Macros
+    var macros by remember {
         mutableStateOf(
             listOf(
-                AutomationMacro(
-                    id = "m_focus_lock",
-                    name = "Nacht-Ablauf (Licht aus -> 1s -> Sperren)",
+                CustomMacro(
+                    id = "m_1",
+                    name = "Scroll & Tap Ablauf",
+                    repeatTimes = 2,
+                    steps = listOf(
+                        MacroStep.SwipeStep(540f, 1500f, 540f, 700f, 250L),
+                        MacroStep.WaitStep(600L),
+                        MacroStep.TapStep(540f, 1100f),
+                        MacroStep.WaitStep(500L)
+                    )
+                ),
+                CustomMacro(
+                    id = "m_2",
+                    name = "Licht aus & Sperren",
                     repeatTimes = 1,
                     steps = listOf(
                         MacroStep.TorchStep(false),
-                        MacroStep.WaitStep(1000L),
+                        MacroStep.WaitStep(800L),
                         MacroStep.LockScreenStep
-                    )
-                ),
-                AutomationMacro(
-                    id = "m_double_tap_flow",
-                    name = "Doppelklick-Kette mit Pause",
-                    repeatTimes = 2,
-                    steps = listOf(
-                        MacroStep.TapStep(540f, 1100f),
-                        MacroStep.WaitStep(400L),
-                        MacroStep.TapStep(540f, 1100f),
-                        MacroStep.WaitStep(800L)
-                    )
-                ),
-                AutomationMacro(
-                    id = "m_net_check",
-                    name = "WLAN-Schnellcheck",
-                    repeatTimes = 1,
-                    steps = listOf(
-                        MacroStep.WaitStep(300L),
-                        MacroStep.SettingsStep("WLAN", Settings.ACTION_WIFI_SETTINGS)
                     )
                 )
             )
         )
     }
 
-    var newMacroName by remember { mutableStateOf("") }
-    var newMacroWaitMs by remember { mutableStateOf("600") }
-    var newMacroTapX by remember { mutableStateOf("540") }
-    var newMacroTapY by remember { mutableStateOf("1100") }
+    var editingMacroId by remember { mutableStateOf<String?>(null) }
+    var draftName by remember { mutableStateOf("") }
+    var draftRepeat by remember { mutableStateOf("1") }
+    var draftSteps by remember { mutableStateOf<List<MacroStep>>(emptyList()) }
+    var stepType by remember { mutableStateOf("WAIT") }
+    var stepValA by remember { mutableStateOf("600") }
+    var stepValB by remember { mutableStateOf("1100") }
+    var stepValC by remember { mutableStateOf("540") }
+    var stepValD by remember { mutableStateOf("800") }
 
     var appQuery by remember { mutableStateOf("") }
     val userApps = remember { loadApps(context) }
@@ -161,11 +171,11 @@ fun OverrideApp() {
     val pad = if (compactCards) 10.dp else 14.dp
     val gap = if (compactCards) 8.dp else 12.dp
 
-    val filteredApps = remember(appQuery, userApps) {
-        if (appQuery.isBlank()) userApps
-        else userApps.filter {
-            it.name.contains(appQuery, ignoreCase = true) ||
-                it.packageName.contains(appQuery, ignoreCase = true)
+    LaunchedEffect(keepScreenOn) {
+        if (keepScreenOn) {
+            activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
 
@@ -174,73 +184,112 @@ fun OverrideApp() {
         return if (useSeconds) (raw * 1000L).coerceAtLeast(100L) else raw.coerceAtLeast(40L)
     }
 
-    fun computeMaxCount(): Int? =
+    fun computeMaxCycles(): Int? =
         if (stopMode == StopMode.CYCLES) (stopValue.toIntOrNull() ?: 10).coerceAtLeast(1) else null
 
     fun computeMaxDurationMs(): Long? =
         if (stopMode == StopMode.DURATION) ((stopValue.toLongOrNull() ?: 10L) * 1000L).coerceAtLeast(500L) else null
 
-    fun runMacro(macro: AutomationMacro) {
+    fun runMacro(macro: CustomMacro) {
         if (macroRunning) {
             statusMsg = "Macro läuft bereits"
             return
         }
         macroRunning = true
-        statusMsg = "Starte: ${macro.name}"
-
-        val flatSteps = buildList {
-            repeat(macro.repeatTimes.coerceAtLeast(1)) {
-                addAll(macro.steps)
-            }
+        val expanded = buildList {
+            repeat(macro.repeatTimes.coerceAtLeast(1)) { addAll(macro.steps) }
+        }
+        if (expanded.isEmpty()) {
+            macroRunning = false
+            statusMsg = "Macro hat keine Schritte"
+            return
         }
 
-        fun executeAt(index: Int) {
-            if (index >= flatSteps.size) {
+        fun runIdx(i: Int) {
+            if (!macroRunning || i >= expanded.size) {
                 macroRunning = false
                 statusMsg = "Fertig: ${macro.name}"
                 return
             }
-            when (val step = flatSteps[index]) {
+            when (val st = expanded[i]) {
                 is MacroStep.WaitStep -> {
-                    statusMsg = step.description
-                    mainHandler.postDelayed({ executeAt(index + 1) }, step.ms.coerceAtLeast(50L))
+                    statusMsg = st.label
+                    mainHandler.postDelayed({ runIdx(i + 1) }, st.ms.coerceAtLeast(40L))
                 }
                 is MacroStep.TapStep -> {
                     val svc = AutoTapService.instance
                     if (svc == null) {
                         macroRunning = false
-                        statusMsg = "Bedienungshilfe für Klick aktivieren"
+                        statusMsg = "Service deaktiviert"
                         openAccessibilitySettings(context)
                     } else {
-                        svc.tapAt(step.x, step.y) {
+                        svc.performPointGesture(ClickPoint(0, st.x, st.y, isSwipe = false)) {
                             mainHandler.post {
-                                statusMsg = step.description
-                                executeAt(index + 1)
+                                statusMsg = st.label
+                                runIdx(i + 1)
+                            }
+                        }
+                    }
+                }
+                is MacroStep.SwipeStep -> {
+                    val svc = AutoTapService.instance
+                    if (svc == null) {
+                        macroRunning = false
+                        statusMsg = "Service deaktiviert"
+                        openAccessibilitySettings(context)
+                    } else {
+                        svc.performPointGesture(
+                            ClickPoint(0, st.x1, st.y1, isSwipe = true, endX = st.x2, endY = st.y2, swipeDurationMs = st.ms)
+                        ) {
+                            mainHandler.post {
+                                statusMsg = st.label
+                                runIdx(i + 1)
                             }
                         }
                     }
                 }
                 is MacroStep.TorchStep -> {
-                    if (setTorchState(context, step.enabled)) {
-                        torchOn = step.enabled
-                    }
-                    statusMsg = step.description
-                    mainHandler.postDelayed({ executeAt(index + 1) }, 150L)
+                    if (setTorchState(context, st.enabled)) torchOn = st.enabled
+                    statusMsg = st.label
+                    mainHandler.postDelayed({ runIdx(i + 1) }, 150L)
                 }
                 is MacroStep.SettingsStep -> {
-                    openSettingsAction(context, step.action)
-                    statusMsg = step.description
-                    mainHandler.postDelayed({ executeAt(index + 1) }, 250L)
+                    openSettingsAction(context, st.action)
+                    statusMsg = st.label
+                    mainHandler.postDelayed({ runIdx(i + 1) }, 250L)
+                }
+                is MacroStep.HomeStep -> {
+                    AutoTapService.instance?.goHomeNow()
+                    statusMsg = st.label
+                    mainHandler.postDelayed({ runIdx(i + 1) }, 200L)
+                }
+                is MacroStep.BackStep -> {
+                    AutoTapService.instance?.goBackNow()
+                    statusMsg = st.label
+                    mainHandler.postDelayed({ runIdx(i + 1) }, 200L)
                 }
                 is MacroStep.LockScreenStep -> {
-                    val locked = AutoTapService.instance?.lockScreenNow() == true
-                    statusMsg = if (locked) "Bildschirm gesperrt" else "Sperren fehlgeschlagen"
+                    AutoTapService.instance?.lockScreenNow()
                     macroRunning = false
+                    statusMsg = st.label
                 }
             }
         }
+        runIdx(0)
+    }
 
-        executeAt(0)
+    fun startEditor(macro: CustomMacro?) {
+        if (macro != null) {
+            editingMacroId = macro.id
+            draftName = macro.name
+            draftRepeat = macro.repeatTimes.toString()
+            draftSteps = macro.steps
+        } else {
+            editingMacroId = "NEW_${System.currentTimeMillis()}"
+            draftName = "Neues Macro ${macros.size + 1}"
+            draftRepeat = "1"
+            draftSteps = listOf(MacroStep.WaitStep(500L), MacroStep.TapStep(540f, 1100f))
+        }
     }
 
     Scaffold(
@@ -258,32 +307,20 @@ fun OverrideApp() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(accent)
-                        )
+                        Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(accent))
                         Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "OVERRIDE",
-                            color = TextLight,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Text("OVERRIDE", color = TextLight, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     }
                     Text(
-                        text = statusMsg,
+                        text = if (macroRunning) "Macro läuft..." else statusMsg,
                         color = accent,
                         fontSize = 12.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(start = 12.dp)
+                        modifier = Modifier.padding(start = 10.dp)
                     )
                 }
-
                 Spacer(Modifier.height(10.dp))
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -292,8 +329,7 @@ fun OverrideApp() {
                         .padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    val tabs = listOf("Home", "Auto Tap", "Macros", "Tools & UI")
-                    tabs.forEachIndexed { idx, title ->
+                    listOf("Home", "Auto Tap", "Macros", "Tools & UI").forEachIndexed { idx, title ->
                         val active = tab == idx
                         Box(
                             modifier = Modifier
@@ -333,29 +369,21 @@ fun OverrideApp() {
                     ) {
                         item {
                             SimpleCard(pad) {
-                                Text("Rechte & Schnellstart", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                Spacer(Modifier.height(4.dp))
-                                Text("Für schwebendes Zielkreuz & Taps beide Rechte aktivieren.", color = TextDim, fontSize = 12.sp)
-                                Spacer(Modifier.height(10.dp))
+                                Text("System & Rechte", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Spacer(Modifier.height(8.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     ActionPill(
-                                        text = if (overlayOk) "Overlay: AN" else "Overlay erlauben",
+                                        text = if (overlayOk) "Overlay: OK" else "Overlay aus",
                                         active = overlayOk,
                                         accent = accent,
                                         modifier = Modifier.weight(1f)
-                                    ) {
-                                        openOverlaySettings(context)
-                                        statusMsg = "Overlay-Einstellung geöffnet"
-                                    }
+                                    ) { openOverlaySettings(context) }
                                     ActionPill(
-                                        text = if (a11yOk) "Service: AN" else "Service erlauben",
+                                        text = if (a11yOk) "Service: OK" else "Service aus",
                                         active = a11yOk,
                                         accent = accent,
                                         modifier = Modifier.weight(1f)
-                                    ) {
-                                        openAccessibilitySettings(context)
-                                        statusMsg = "Bedienungshilfen geöffnet"
-                                    }
+                                    ) { openAccessibilitySettings(context) }
                                 }
                                 Spacer(Modifier.height(8.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -368,27 +396,39 @@ fun OverrideApp() {
                                         val next = !torchOn
                                         if (setTorchState(context, next)) {
                                             torchOn = next
-                                            statusMsg = if (next) "Taschenlampe AN" else "Taschenlampe AUS"
+                                            statusMsg = if (next) "Licht AN" else "Licht AUS"
                                         }
                                     }
                                     ActionPill(
-                                        text = "Sperren",
-                                        active = false,
+                                        text = if (macroRunning) "Macro Stopp" else "Sperren",
+                                        active = macroRunning,
                                         accent = accent,
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        if (AutoTapService.instance?.lockScreenNow() == true) {
-                                            statusMsg = "Bildschirm gesperrt"
+                                        if (macroRunning) {
+                                            macroRunning = false
+                                            statusMsg = "Macro gestoppt"
                                         } else {
-                                            openAccessibilitySettings(context)
-                                            statusMsg = "Service für Sperren aktivieren"
+                                            AutoTapService.instance?.lockScreenNow()
                                         }
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    ActionPill("Home", false, accent, Modifier.weight(1f)) {
+                                        AutoTapService.instance?.goHomeNow()
+                                    }
+                                    ActionPill("Zurück", false, accent, Modifier.weight(1f)) {
+                                        AutoTapService.instance?.goBackNow()
+                                    }
+                                    ActionPill("Verlauf", false, accent, Modifier.weight(1f)) {
+                                        AutoTapService.instance?.openRecentsNow()
                                     }
                                 }
                             }
                         }
 
-                        items(customMacros, key = { it.id }) { macro ->
+                        items(macros, key = { it.id }) { m ->
                             SimpleCard(pad) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -396,20 +436,14 @@ fun OverrideApp() {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
-                                        Text(macro.name, color = TextLight, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                        Text(
-                                            text = "${macro.steps.size} Schritte • ${macro.repeatTimes}x",
-                                            color = TextDim,
-                                            fontSize = 12.sp
-                                        )
+                                        Text(m.name, color = TextLight, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                        Text("${m.steps.size} Schritte • ${m.repeatTimes}x", color = TextDim, fontSize = 12.sp)
                                     }
                                     Button(
-                                        onClick = { runMacro(macro) },
+                                        onClick = { runMacro(m) },
                                         colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.Black),
                                         shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Text("Start", fontWeight = FontWeight.Bold)
-                                    }
+                                    ) { Text("Start", fontWeight = FontWeight.Bold) }
                                 }
                             }
                         }
@@ -417,50 +451,161 @@ fun OverrideApp() {
                 }
 
                 1 -> {
-                    val connected = AutoTapService.isServiceConnected
-                    val overlayAllowed = Settings.canDrawOverlays(context)
+                    val safeIdx = selectedPointIdx.coerceIn(0, (points.size - 1).coerceAtLeast(0))
+                    val activePt = points[safeIdx]
+                    val a11yOk = AutoTapService.isServiceConnected
+                    val overlayOk = Settings.canDrawOverlays(context)
+
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(gap),
                         contentPadding = PaddingValues(bottom = 24.dp)
                     ) {
                         item {
                             SimpleCard(pad) {
-                                Text("Schwebender Auto-Clicker", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                Text(
-                                    text = if (connected && overlayAllowed)
-                                        "Bereit • Klicks: $tapCount • Ziel: (${tapX.toIntOrNull() ?: 0}, ${tapY.toIntOrNull() ?: 0})"
-                                    else
-                                        "Bitte Overlay & Bedienungshilfen aktivieren",
-                                    color = if (connected && overlayAllowed) accent else TextDim,
-                                    fontSize = 12.sp
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Multi-Punkt & Swipe Auto-Clicker", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                    Text("Aktionen: $actionCount", color = accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                                if (!a11yOk || !overlayOk) {
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        "Hinweis: Wenn nichts klickt, prüfe Overlay & Bedienungshilfen (inkl. Eingeschränkte Einstellungen).",
+                                        color = TextDim,
+                                        fontSize = 11.sp
+                                    )
+                                }
                                 Spacer(Modifier.height(10.dp))
 
-                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    OutlinedTextField(
-                                        value = tapX,
-                                        onValueChange = { tapX = it.filter { c -> c.isDigit() } },
-                                        label = { Text("X (px)", color = TextDim) },
-                                        singleLine = true,
-                                        modifier = Modifier.weight(1f),
-                                        colors = fieldColors(accent)
-                                    )
-                                    OutlinedTextField(
-                                        value = tapY,
-                                        onValueChange = { tapY = it.filter { c -> c.isDigit() } },
-                                        label = { Text("Y (px)", color = TextDim) },
-                                        singleLine = true,
-                                        modifier = Modifier.weight(1f),
-                                        colors = fieldColors(accent)
-                                    )
+                                // Punkt-Auswahl
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    points.forEachIndexed { idx, pt ->
+                                        val sel = idx == safeIdx
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(if (sel) accent else SoftBg)
+                                                .padding(horizontal = 12.dp, vertical = 7.dp)
+                                                .clickable { selectedPointIdx = idx }
+                                        ) {
+                                            Text(
+                                                text = "P${pt.id}${if (pt.isSwipe) "→" else ""}",
+                                                color = if (sel) Color.Black else TextLight,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                    if (points.size < 8) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(SoftBg)
+                                                .border(1.dp, accent, RoundedCornerShape(8.dp))
+                                                .padding(horizontal = 10.dp, vertical = 7.dp)
+                                                .clickable {
+                                                    val nextId = points.size + 1
+                                                    points = points + ClickPoint(nextId, 540f, 1000f + nextId * 90f)
+                                                    selectedPointIdx = points.lastIndex
+                                                }
+                                        ) {
+                                            Text("+ Punkt", color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                    if (points.size > 1) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(SoftBg)
+                                                .padding(horizontal = 10.dp, vertical = 7.dp)
+                                                .clickable {
+                                                    points = points.dropLast(1)
+                                                    selectedPointIdx = (points.size - 1).coerceAtLeast(0)
+                                                }
+                                        ) {
+                                            Text("- Pkt", color = TextDim, fontSize = 12.sp)
+                                        }
+                                    }
                                 }
 
                                 Spacer(Modifier.height(10.dp))
 
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = activePt.x.toInt().toString(),
+                                        onValueChange = { txt ->
+                                            val v = txt.filter { it.isDigit() }.toFloatOrNull() ?: 0f
+                                            points = points.mapIndexed { i, p -> if (i == safeIdx) p.copy(x = v) else p }
+                                        },
+                                        label = { Text("X", color = TextDim) },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f),
+                                        colors = fieldColors(accent)
+                                    )
+                                    OutlinedTextField(
+                                        value = activePt.y.toInt().toString(),
+                                        onValueChange = { txt ->
+                                            val v = txt.filter { it.isDigit() }.toFloatOrNull() ?: 0f
+                                            points = points.mapIndexed { i, p -> if (i == safeIdx) p.copy(y = v) else p }
+                                        },
+                                        label = { Text("Y", color = TextDim) },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f),
+                                        colors = fieldColors(accent)
+                                    )
+                                    ActionPill(
+                                        text = if (activePt.isSwipe) "Modus: Swipe" else "Modus: Tap",
+                                        active = activePt.isSwipe,
+                                        accent = accent,
+                                        modifier = Modifier.weight(1.1f)
+                                    ) {
+                                        points = points.mapIndexed { i, p ->
+                                            if (i == safeIdx) {
+                                                val toSwipe = !p.isSwipe
+                                                p.copy(
+                                                    isSwipe = toSwipe,
+                                                    endX = p.endX ?: p.x,
+                                                    endY = p.endY ?: (p.y - 400f)
+                                                )
+                                            } else p
+                                        }
+                                    }
+                                }
+
+                                if (activePt.isSwipe) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedTextField(
+                                            value = (activePt.endX ?: activePt.x).toInt().toString(),
+                                            onValueChange = { txt ->
+                                                val v = txt.filter { it.isDigit() }.toFloatOrNull() ?: 0f
+                                                points = points.mapIndexed { i, p -> if (i == safeIdx) p.copy(endX = v) else p }
+                                            },
+                                            label = { Text("Ziel X", color = TextDim) },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f),
+                                            colors = fieldColors(accent)
+                                        )
+                                        OutlinedTextField(
+                                            value = (activePt.endY ?: activePt.y).toInt().toString(),
+                                            onValueChange = { txt ->
+                                                val v = txt.filter { it.isDigit() }.toFloatOrNull() ?: 0f
+                                                points = points.mapIndexed { i, p -> if (i == safeIdx) p.copy(endY = v) else p }
+                                            },
+                                            label = { Text("Ziel Y", color = TextDim) },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f),
+                                            colors = fieldColors(accent)
+                                        )
+                                    }
+                                }
+
+                                Spacer(Modifier.height(10.dp))
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = intervalValue,
                                         onValueChange = { intervalValue = it.filter { c -> c.isDigit() } },
@@ -473,30 +618,35 @@ fun OverrideApp() {
                                         text = if (useSeconds) "Einheit: s" else "Einheit: ms",
                                         active = useSeconds,
                                         accent = accent,
-                                        modifier = Modifier.weight(0.75f)
-                                    ) {
-                                        useSeconds = !useSeconds
-                                    }
+                                        modifier = Modifier.weight(0.8f)
+                                    ) { useSeconds = !useSeconds }
+                                    OutlinedTextField(
+                                        value = jitterPx,
+                                        onValueChange = { jitterPx = it.filter { c -> c.isDigit() } },
+                                        label = { Text("Jitter px", color = TextDim) },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(0.75f),
+                                        colors = fieldColors(accent)
+                                    )
                                 }
 
                                 Spacer(Modifier.height(10.dp))
-
                                 Text("Stopp-Bedingung", color = TextLight, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                 Spacer(Modifier.height(6.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    StopMode.entries.forEach { mode ->
-                                        val sel = stopMode == mode
+                                    StopMode.entries.forEach { m ->
+                                        val sel = stopMode == m
                                         Box(
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .clip(RoundedCornerShape(8.dp))
                                                 .background(if (sel) accent.copy(alpha = 0.2f) else SoftBg)
                                                 .border(1.dp, if (sel) accent else LineColor, RoundedCornerShape(8.dp))
-                                                .clickable { stopMode = mode }
+                                                .clickable { stopMode = m }
                                                 .padding(vertical = 8.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text(mode.label, color = TextLight, fontSize = 11.sp, maxLines = 1)
+                                            Text(m.label, color = TextLight, fontSize = 11.sp, maxLines = 1)
                                         }
                                     }
                                 }
@@ -506,12 +656,7 @@ fun OverrideApp() {
                                     OutlinedTextField(
                                         value = stopValue,
                                         onValueChange = { stopValue = it.filter { c -> c.isDigit() } },
-                                        label = {
-                                            Text(
-                                                if (stopMode == StopMode.CYCLES) "Anzahl Klicks" else "Dauer in Sekunden",
-                                                color = TextDim
-                                            )
-                                        },
+                                        label = { Text(if (stopMode == StopMode.CYCLES) "Anzahl Zyklen" else "Dauer in Sekunden", color = TextDim) },
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth(),
                                         colors = fieldColors(accent)
@@ -520,17 +665,12 @@ fun OverrideApp() {
 
                                 Spacer(Modifier.height(12.dp))
 
-                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedButton(
                                         onClick = {
-                                            if (!overlayAllowed) {
+                                            if (!overlayOk) {
                                                 openOverlaySettings(context)
                                                 statusMsg = "Overlay-Recht aktivieren"
-                                                return@OutlinedButton
-                                            }
-                                            if (!connected) {
-                                                openAccessibilitySettings(context)
-                                                statusMsg = "Bedienungshilfe aktivieren"
                                                 return@OutlinedButton
                                             }
                                             if (overlayActive) {
@@ -539,39 +679,30 @@ fun OverrideApp() {
                                                 autoTapRunning = false
                                                 statusMsg = "Overlay ausgeblendet"
                                             } else {
-                                                val x = tapX.toFloatOrNull() ?: 540f
-                                                val y = tapY.toFloatOrNull() ?: 1100f
-                                                tapCount = 0
+                                                actionCount = 0
                                                 OverlayManager.showOverlay(
                                                     context = context,
-                                                    initialX = x,
-                                                    initialY = y,
+                                                    initialPoints = points,
                                                     intervalMs = computeIntervalMs(),
-                                                    maxCount = computeMaxCount(),
+                                                    maxCycles = computeMaxCycles(),
                                                     maxDurationMs = computeMaxDurationMs(),
+                                                    jitterPx = jitterPx.toIntOrNull() ?: 0,
                                                     accentHex = accent.toArgb(),
-                                                    onCoordinatesChanged = { nx, ny ->
-                                                        tapX = nx.toInt().toString()
-                                                        tapY = ny.toInt().toString()
-                                                    },
+                                                    onPointsChanged = { updated -> points = updated },
                                                     onRunningChanged = { running ->
                                                         autoTapRunning = running
-                                                        statusMsg = if (running) "Auto-Klick läuft" else "Overlay bereit"
+                                                        statusMsg = if (running) "Overlay klickt..." else "Overlay bereit"
                                                     },
-                                                    onTapTick = { tick -> tapCount = tick }
+                                                    onActionTick = { total -> actionCount = total }
                                                 )
                                                 overlayActive = true
-                                                statusMsg = "Kreis ziehen & START drücken"
+                                                statusMsg = "Kreise ziehen & START drücken"
                                             }
                                         },
                                         border = BorderStroke(1.dp, accent),
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Text(
-                                            text = if (overlayActive) "Overlay aus" else "Overlay zeigen",
-                                            color = accent,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Text(if (overlayActive) "Overlay aus" else "Overlay zeigen", color = accent, fontWeight = FontWeight.Bold)
                                     }
 
                                     Button(
@@ -579,7 +710,7 @@ fun OverrideApp() {
                                             val svc = AutoTapService.instance
                                             if (svc == null) {
                                                 openAccessibilitySettings(context)
-                                                statusMsg = "Bedienungshilfe aktivieren"
+                                                statusMsg = "Service aktivieren!"
                                                 return@Button
                                             }
                                             if (autoTapRunning) {
@@ -587,21 +718,19 @@ fun OverrideApp() {
                                                 autoTapRunning = false
                                                 statusMsg = "Gestoppt"
                                             } else {
-                                                val x = tapX.toFloatOrNull() ?: 540f
-                                                val y = tapY.toFloatOrNull() ?: 1100f
-                                                tapCount = 0
+                                                actionCount = 0
                                                 autoTapRunning = true
                                                 statusMsg = "Läuft..."
-                                                svc.startAutoTap(
-                                                    x = x,
-                                                    y = y,
+                                                svc.startSequence(
+                                                    points = points,
                                                     intervalMs = computeIntervalMs(),
-                                                    maxCount = computeMaxCount(),
+                                                    maxCycles = computeMaxCycles(),
                                                     maxDurationMs = computeMaxDurationMs(),
-                                                    onTick = { tapCount = it },
+                                                    jitterPx = jitterPx.toIntOrNull() ?: 0,
+                                                    onStepTick = { total, _ -> actionCount = total },
                                                     onFinished = {
                                                         autoTapRunning = false
-                                                        statusMsg = "Beendet"
+                                                        statusMsg = "Fertig"
                                                     }
                                                 )
                                             }
@@ -609,7 +738,7 @@ fun OverrideApp() {
                                         colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.Black),
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Text(if (autoTapRunning) "Stopp" else "Direkt-Start", fontWeight = FontWeight.Bold)
+                                        Text(if (autoTapRunning) "Stopp" else "Start", fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -623,73 +752,152 @@ fun OverrideApp() {
                         contentPadding = PaddingValues(bottom = 24.dp)
                     ) {
                         item {
-                            SimpleCard(pad) {
-                                Text("Neues Macro (Warten + Klick)", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                Spacer(Modifier.height(8.dp))
-                                OutlinedTextField(
-                                    value = newMacroName,
-                                    onValueChange = { newMacroName = it },
-                                    label = { Text("Macro-Name", color = TextDim) },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = fieldColors(accent)
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    OutlinedTextField(
-                                        value = newMacroWaitMs,
-                                        onValueChange = { newMacroWaitMs = it.filter { c -> c.isDigit() } },
-                                        label = { Text("Pause (ms)", color = TextDim) },
-                                        singleLine = true,
-                                        modifier = Modifier.weight(1f),
-                                        colors = fieldColors(accent)
-                                    )
-                                    OutlinedTextField(
-                                        value = newMacroTapX,
-                                        onValueChange = { newMacroTapX = it.filter { c -> c.isDigit() } },
-                                        label = { Text("X", color = TextDim) },
-                                        singleLine = true,
-                                        modifier = Modifier.weight(0.7f),
-                                        colors = fieldColors(accent)
-                                    )
-                                    OutlinedTextField(
-                                        value = newMacroTapY,
-                                        onValueChange = { newMacroTapY = it.filter { c -> c.isDigit() } },
-                                        label = { Text("Y", color = TextDim) },
-                                        singleLine = true,
-                                        modifier = Modifier.weight(0.7f),
-                                        colors = fieldColors(accent)
-                                    )
-                                }
-                                Spacer(Modifier.height(10.dp))
+                            if (editingMacroId == null) {
                                 Button(
-                                    onClick = {
-                                        val title = newMacroName.trim().ifEmpty { "Eigenes Macro ${customMacros.size + 1}" }
-                                        val wait = (newMacroWaitMs.toLongOrNull() ?: 500L).coerceAtLeast(50L)
-                                        val x = newMacroTapX.toFloatOrNull() ?: 540f
-                                        val y = newMacroTapY.toFloatOrNull() ?: 1100f
-                                        customMacros = customMacros + AutomationMacro(
-                                            id = "m_${System.currentTimeMillis()}",
-                                            name = title,
-                                            repeatTimes = 1,
-                                            steps = listOf(
-                                                MacroStep.WaitStep(wait),
-                                                MacroStep.TapStep(x, y),
-                                                MacroStep.WaitStep(wait)
-                                            )
-                                        )
-                                        newMacroName = ""
-                                        statusMsg = "Macro gespeichert"
-                                    },
+                                    onClick = { startEditor(null) },
                                     colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.Black),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("Macro hinzufügen", fontWeight = FontWeight.Bold)
+                                    Text("+ Neues Macro erstellen", fontWeight = FontWeight.Bold)
+                                }
+                            } else {
+                                SimpleCard(pad) {
+                                    Text("Macro bearbeiten", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Spacer(Modifier.height(8.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedTextField(
+                                            value = draftName,
+                                            onValueChange = { draftName = it },
+                                            label = { Text("Name", color = TextDim) },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1.4f),
+                                            colors = fieldColors(accent)
+                                        )
+                                        OutlinedTextField(
+                                            value = draftRepeat,
+                                            onValueChange = { draftRepeat = it.filter { c -> c.isDigit() } },
+                                            label = { Text("Wdh.", color = TextDim) },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(0.6f),
+                                            colors = fieldColors(accent)
+                                        )
+                                    }
+
+                                    Spacer(Modifier.height(8.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        listOf("WAIT" to "Warten", "TAP" to "Klick", "SWIPE" to "Swipe", "TORCH" to "Licht", "LOCK" to "Sperren").forEach { (key, title) ->
+                                            val active = stepType == key
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(if (active) accent else SoftBg)
+                                                    .clickable { stepType = key }
+                                                    .padding(horizontal = 9.dp, vertical = 6.dp)
+                                            ) {
+                                                Text(title, color = if (active) Color.Black else TextLight, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(Modifier.height(8.dp))
+                                    when (stepType) {
+                                        "WAIT" -> OutlinedTextField(
+                                            value = stepValA,
+                                            onValueChange = { stepValA = it.filter { c -> c.isDigit() } },
+                                            label = { Text("Wartezeit (ms)", color = TextDim) },
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = fieldColors(accent)
+                                        )
+                                        "TAP" -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedTextField(stepValC, { stepValC = it.filter { c -> c.isDigit() } }, label = { Text("X", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
+                                            OutlinedTextField(stepValB, { stepValB = it.filter { c -> c.isDigit() } }, label = { Text("Y", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
+                                        }
+                                        "SWIPE" -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            OutlinedTextField(stepValC, { stepValC = it.filter { c -> c.isDigit() } }, label = { Text("X1", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
+                                            OutlinedTextField(stepValB, { stepValB = it.filter { c -> c.isDigit() } }, label = { Text("Y1", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
+                                            OutlinedTextField(stepValA, { stepValA = it.filter { c -> c.isDigit() } }, label = { Text("X2", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
+                                            OutlinedTextField(stepValD, { stepValD = it.filter { c -> c.isDigit() } }, label = { Text("Y2", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
+                                        }
+                                        "TORCH" -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            ActionPill("Licht AN", stepValA == "1", accent, Modifier.weight(1f)) { stepValA = "1" }
+                                            ActionPill("Licht AUS", stepValA != "1", accent, Modifier.weight(1f)) { stepValA = "0" }
+                                        }
+                                    }
+
+                                    Spacer(Modifier.height(8.dp))
+                                    OutlinedButton(
+                                        onClick = {
+                                            val added: MacroStep = when (stepType) {
+                                                "TAP" -> MacroStep.TapStep(stepValC.toFloatOrNull() ?: 540f, stepValB.toFloatOrNull() ?: 1100f)
+                                                "SWIPE" -> MacroStep.SwipeStep(
+                                                    stepValC.toFloatOrNull() ?: 540f,
+                                                    stepValB.toFloatOrNull() ?: 1400f,
+                                                    stepValA.toFloatOrNull() ?: 540f,
+                                                    stepValD.toFloatOrNull() ?: 700f,
+                                                    250L
+                                                )
+                                                "TORCH" -> MacroStep.TorchStep(stepValA == "1")
+                                                "LOCK" -> MacroStep.LockScreenStep
+                                                else -> MacroStep.WaitStep((stepValA.toLongOrNull() ?: 500L).coerceAtLeast(50L))
+                                            }
+                                            draftSteps = draftSteps + added
+                                        },
+                                        border = BorderStroke(1.dp, accent),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) { Text("+ Schritt hinzufügen", color = accent) }
+
+                                    Spacer(Modifier.height(6.dp))
+                                    draftSteps.forEachIndexed { idx, st ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text("${idx + 1}. ${st.label}", color = TextDim, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                            Text(
+                                                "Entf.",
+                                                color = accent,
+                                                fontSize = 11.sp,
+                                                modifier = Modifier.clickable {
+                                                    draftSteps = draftSteps.filterIndexed { i, _ -> i != idx }
+                                                }
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(Modifier.height(10.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(
+                                            onClick = { editingMacroId = null },
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("Abbrechen", color = TextDim) }
+                                        Button(
+                                            onClick = {
+                                                val id = editingMacroId ?: "m_${System.currentTimeMillis()}"
+                                                val updated = CustomMacro(
+                                                    id = id,
+                                                    name = draftName.trim().ifEmpty { "Macro" },
+                                                    repeatTimes = (draftRepeat.toIntOrNull() ?: 1).coerceAtLeast(1),
+                                                    steps = draftSteps
+                                                )
+                                                macros = if (macros.any { it.id == id }) {
+                                                    macros.map { if (it.id == id) updated else it }
+                                                } else {
+                                                    macros + updated
+                                                }
+                                                editingMacroId = null
+                                                statusMsg = "Macro gespeichert"
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.Black),
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("Speichern", fontWeight = FontWeight.Bold) }
+                                    }
                                 }
                             }
                         }
 
-                        items(customMacros, key = { it.id }) { macro ->
+                        items(macros, key = { it.id }) { m ->
                             SimpleCard(pad) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -697,18 +905,26 @@ fun OverrideApp() {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                        Text(macro.name, color = TextLight, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                        Spacer(Modifier.height(4.dp))
-                                        macro.steps.forEach { step ->
-                                            Text("• ${step.description}", color = TextDim, fontSize = 12.sp)
-                                        }
+                                        Text(m.name, color = TextLight, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                        Text("${m.steps.size} Schritte • ${m.repeatTimes}x", color = TextDim, fontSize = 12.sp)
                                     }
-                                    Button(
-                                        onClick = { runMacro(macro) },
-                                        colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.Black),
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Text("Run", fontWeight = FontWeight.Bold)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        OutlinedButton(onClick = { startEditor(m) }, border = BorderStroke(1.dp, LineColor)) {
+                                            Text("Edit", color = TextLight, fontSize = 12.sp)
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                macros = macros.filterNot { it.id == m.id }
+                                                statusMsg = "Macro gelöscht"
+                                            },
+                                            border = BorderStroke(1.dp, LineColor)
+                                        ) {
+                                            Text("Löschen", color = accent, fontSize = 12.sp)
+                                        }
+                                        Button(
+                                            onClick = { runMacro(m) },
+                                            colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.Black)
+                                        ) { Text("Run", fontWeight = FontWeight.Bold) }
                                     }
                                 }
                             }
@@ -723,7 +939,7 @@ fun OverrideApp() {
                     ) {
                         item {
                             SimpleCard(pad) {
-                                Text("Design & Layout", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text("Design & Extra-Features", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                 Spacer(Modifier.height(10.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     AccentTheme.entries.forEach { theme ->
@@ -751,12 +967,16 @@ fun OverrideApp() {
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
+                                    Text("Display wach halten (in App)", color = TextLight, fontSize = 13.sp)
+                                    Switch(checked = keepScreenOn, onCheckedChange = { keepScreenOn = it }, colors = SwitchDefaults.colors(checkedTrackColor = accent))
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Text("Kompakte Karten", color = TextLight, fontSize = 13.sp)
-                                    Switch(
-                                        checked = compactCards,
-                                        onCheckedChange = { compactCards = it },
-                                        colors = SwitchDefaults.colors(checkedTrackColor = accent)
-                                    )
+                                    Switch(checked = compactCards, onCheckedChange = { compactCards = it }, colors = SwitchDefaults.colors(checkedTrackColor = accent))
                                 }
                             }
                         }
@@ -844,10 +1064,10 @@ private fun ActionPill(
             .background(if (active) accent.copy(alpha = 0.2f) else SoftBg)
             .border(1.dp, if (active) accent else LineColor, RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 11.dp, horizontal = 10.dp),
+            .padding(vertical = 10.dp, horizontal = 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(text = text, color = TextLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text(text = text, color = TextLight, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
