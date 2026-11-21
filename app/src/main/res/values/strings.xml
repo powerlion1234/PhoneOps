@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OVERRIDE</string>
-    <string name="a11y_service_desc">Allows OVERRIDE to run screen tap macros and lock/navigation actions when enabled in Accessibility settings.</string>
+    <string name="a11y_service_desc">Ermöglicht OVERRIDE das Ausführen von Bildschirm-Klicks, Macros und Systemaktionen wie Sperren.</string>
 </resources>
