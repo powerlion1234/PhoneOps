@@ -45,17 +45,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.util.Locale
 
-private val BgBlack = Color(0xFF07080B)
-private val CardBg = Color(0xFF11141C)
-private val SoftBg = Color(0xFF191D28)
-private val TextLight = Color(0xFFF5F7FA)
-private val TextDim = Color(0xFF949DB0)
-private val LineColor = Color(0xFF262C3C)
+private val BgBlack = Color(0xFF07080C)
+private val CardBg = Color(0xFF12151F)
+private val SoftBg = Color(0xFF1B202E)
+private val TextLight = Color(0xFFF6F8FB)
+private val TextDim = Color(0xFF9CA6B9)
+private val LineColor = Color(0xFF2A3144)
 
 enum class AccentTheme(val label: String, val color: Color) {
-    CRIMSON("Crimson", Color(0xFFFF243F)),
-    CYAN("Cyan", Color(0xFF00DCFF)),
-    AMBER("Amber", Color(0xFFFFAA00))
+    CRIMSON("Crimson", Color(0xFFFF2844)),
+    CYAN("Cyan", Color(0xFF00E0FF)),
+    AMBER("Amber", Color(0xFFFFB000))
 }
 
 enum class StopMode(val label: String) {
@@ -93,6 +93,13 @@ class MainActivity : ComponentActivity() {
             OverrideApp(activity = this)
         }
     }
+
+    override fun onStop() {
+        super.onStop()
+        if (!OverlayManager.isOverlayVisible() && AutoTapService.isRunningAutoTap) {
+            AutoTapService.instance?.stopAutoTap(reason = "App verlassen — gestoppt")
+        }
+    }
 }
 
 @Composable
@@ -115,7 +122,7 @@ fun OverrideApp(activity: ComponentActivity) {
         mutableStateOf(
             listOf(
                 ClickPoint(1, 540f, 1100f),
-                ClickPoint(2, 540f, 1450f, isSwipe = true, endX = 540f, endY = 900f, swipeDurationMs = 220L)
+                ClickPoint(2, 540f, 1450f, isSwipe = true, endX = 540f, endY = 900f, swipeDurationMs = 200L)
             )
         )
     }
@@ -127,7 +134,7 @@ fun OverrideApp(activity: ComponentActivity) {
     var jitterPx by remember { mutableStateOf("0") }
     var actionCount by remember { mutableIntStateOf(0) }
     var overlayActive by remember { mutableStateOf(OverlayManager.isOverlayVisible()) }
-    var autoTapRunning by remember { mutableStateOf(false) }
+    var autoTapRunning by remember { mutableStateOf(AutoTapService.isRunningAutoTap) }
 
     var macros by remember {
         mutableStateOf(
@@ -137,10 +144,10 @@ fun OverrideApp(activity: ComponentActivity) {
                     name = "Scroll & Tap Ablauf",
                     repeatTimes = 2,
                     steps = listOf(
-                        MacroStep.SwipeStep(540f, 1500f, 540f, 750f, 220L),
-                        MacroStep.WaitStep(350L),
+                        MacroStep.SwipeStep(540f, 1500f, 540f, 750f, 200L),
+                        MacroStep.WaitStep(300L),
                         MacroStep.TapStep(540f, 1100f),
-                        MacroStep.WaitStep(300L)
+                        MacroStep.WaitStep(250L)
                     )
                 ),
                 CustomMacro(
@@ -149,7 +156,7 @@ fun OverrideApp(activity: ComponentActivity) {
                     repeatTimes = 1,
                     steps = listOf(
                         MacroStep.TorchStep(false),
-                        MacroStep.WaitStep(600L),
+                        MacroStep.WaitStep(500L),
                         MacroStep.LockScreenStep
                     )
                 )
@@ -162,7 +169,7 @@ fun OverrideApp(activity: ComponentActivity) {
     var draftRepeat by remember { mutableStateOf("1") }
     var draftSteps by remember { mutableStateOf<List<MacroStep>>(emptyList()) }
     var stepType by remember { mutableStateOf("WAIT") }
-    var stepValA by remember { mutableStateOf("400") }
+    var stepValA by remember { mutableStateOf("350") }
     var stepValB by remember { mutableStateOf("1100") }
     var stepValC by remember { mutableStateOf("540") }
     var stepValD by remember { mutableStateOf("800") }
@@ -178,8 +185,8 @@ fun OverrideApp(activity: ComponentActivity) {
     }
 
     val accent = accentTheme.color
-    val pad = if (compactCards) 10.dp else 14.dp
-    val gap = if (compactCards) 8.dp else 12.dp
+    val pad = if (compactCards) 12.dp else 16.dp
+    val gap = if (compactCards) 10.dp else 14.dp
 
     fun buzz() {
         if (hapticOn) {
@@ -200,7 +207,7 @@ fun OverrideApp(activity: ComponentActivity) {
 
     fun computeIntervalMs(): Long {
         val raw = intervalValue.toLongOrNull() ?: 250L
-        return if (useSeconds) (raw * 1000L).coerceAtLeast(100L) else raw.coerceAtLeast(25L)
+        return if (useSeconds) (raw * 1000L).coerceAtLeast(100L) else raw.coerceAtLeast(30L)
     }
 
     fun computeMaxCycles(): Int? =
@@ -224,9 +231,15 @@ fun OverrideApp(activity: ComponentActivity) {
         }
     }
 
+    fun stopMacroExecution(msg: String = "Macro gestoppt") {
+        macroRunning = false
+        mainHandler.removeCallbacksAndMessages(null)
+        statusMsg = msg
+    }
+
     fun runMacro(macro: CustomMacro) {
         if (macroRunning) {
-            statusMsg = "Macro läuft bereits"
+            stopMacroExecution("Macro abgebrochen")
             return
         }
         buzz()
@@ -235,72 +248,66 @@ fun OverrideApp(activity: ComponentActivity) {
             repeat(macro.repeatTimes.coerceAtLeast(1)) { addAll(macro.steps) }
         }
         if (expanded.isEmpty()) {
-            macroRunning = false
-            statusMsg = "Macro hat keine Schritte"
+            stopMacroExecution("Macro hat keine Schritte")
             return
         }
 
         fun runIdx(i: Int) {
-            if (!macroRunning || i >= expanded.size) {
+            if (!macroRunning) return
+            if (i >= expanded.size) {
                 macroRunning = false
                 statusMsg = "Fertig: ${macro.name}"
                 return
             }
             when (val st = expanded[i]) {
                 is MacroStep.WaitStep -> {
-                    statusMsg = st.label
+                    statusMsg = "${i + 1}/${expanded.size}: ${st.label}"
                     mainHandler.postDelayed({ runIdx(i + 1) }, st.ms.coerceAtLeast(30L))
                 }
                 is MacroStep.TapStep -> {
                     val svc = AutoTapService.instance
                     if (svc == null) {
-                        macroRunning = false
-                        statusMsg = "Service deaktiviert"
+                        stopMacroExecution("Service deaktiviert")
                         openAccessibilitySettings(context)
                     } else {
+                        statusMsg = "${i + 1}/${expanded.size}: ${st.label}"
                         svc.performPointGesture(ClickPoint(0, st.x, st.y, isSwipe = false)) {
-                            mainHandler.post {
-                                statusMsg = st.label
-                                runIdx(i + 1)
-                            }
+                            mainHandler.post { if (macroRunning) runIdx(i + 1) }
                         }
                     }
                 }
                 is MacroStep.SwipeStep -> {
                     val svc = AutoTapService.instance
                     if (svc == null) {
-                        macroRunning = false
-                        statusMsg = "Service deaktiviert"
+                        stopMacroExecution("Service deaktiviert")
                         openAccessibilitySettings(context)
                     } else {
+                        statusMsg = "${i + 1}/${expanded.size}: ${st.label}"
                         svc.performPointGesture(
                             ClickPoint(0, st.x1, st.y1, isSwipe = true, endX = st.x2, endY = st.y2, swipeDurationMs = st.ms)
                         ) {
-                            mainHandler.post {
-                                statusMsg = st.label
-                                runIdx(i + 1)
-                            }
+                            mainHandler.post { if (macroRunning) runIdx(i + 1) }
                         }
                     }
                 }
                 is MacroStep.TorchStep -> {
                     if (setTorchState(context, st.enabled)) torchOn = st.enabled
-                    statusMsg = st.label
+                    statusMsg = "${i + 1}/${expanded.size}: ${st.label}"
                     mainHandler.postDelayed({ runIdx(i + 1) }, 120L)
                 }
                 is MacroStep.SettingsStep -> {
                     openSettingsAction(context, st.action)
-                    statusMsg = st.label
+                    statusMsg = "${i + 1}/${expanded.size}: ${st.label}"
                     mainHandler.postDelayed({ runIdx(i + 1) }, 200L)
                 }
                 is MacroStep.HomeStep -> {
                     AutoTapService.instance?.goHomeNow()
-                    statusMsg = st.label
+                    statusMsg = "${i + 1}/${expanded.size}: ${st.label}"
                     mainHandler.postDelayed({ runIdx(i + 1) }, 180L)
                 }
                 is MacroStep.BackStep -> {
                     AutoTapService.instance?.goBackNow()
-                    statusMsg = st.label
+                    statusMsg = "${i + 1}/${expanded.size}: ${st.label}"
                     mainHandler.postDelayed({ runIdx(i + 1) }, 180L)
                 }
                 is MacroStep.LockScreenStep -> {
@@ -323,7 +330,7 @@ fun OverrideApp(activity: ComponentActivity) {
             editingMacroId = "NEW_${System.currentTimeMillis()}"
             draftName = "Neues Macro ${macros.size + 1}"
             draftRepeat = "1"
-            draftSteps = listOf(MacroStep.WaitStep(400L), MacroStep.TapStep(540f, 1100f))
+            draftSteps = listOf(MacroStep.WaitStep(350L), MacroStep.TapStep(540f, 1100f))
         }
     }
 
@@ -334,7 +341,7 @@ fun OverrideApp(activity: ComponentActivity) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -342,25 +349,33 @@ fun OverrideApp(activity: ComponentActivity) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(accent))
-                        Spacer(Modifier.width(8.dp))
-                        Text("OVERRIDE", color = TextLight, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Box(modifier = Modifier.size(11.dp).clip(CircleShape).background(accent))
+                        Spacer(Modifier.width(10.dp))
+                        Text("OVERRIDE", color = TextLight, fontSize = 21.sp, fontWeight = FontWeight.Bold)
                     }
-                    Text(
-                        text = if (macroRunning) "Macro läuft..." else statusMsg,
-                        color = accent,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Surface(
+                        color = SoftBg,
+                        shape = RoundedCornerShape(20.dp),
+                        border = BorderStroke(1.dp, accent.copy(alpha = 0.5f)),
                         modifier = Modifier.padding(start = 10.dp)
-                    )
+                    ) {
+                        Text(
+                            text = statusMsg,
+                            color = accent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
                 }
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(12.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(CardBg, RoundedCornerShape(12.dp))
-                        .border(1.dp, LineColor, RoundedCornerShape(12.dp))
+                        .background(CardBg, RoundedCornerShape(14.dp))
+                        .border(1.dp, LineColor, RoundedCornerShape(14.dp))
                         .padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
@@ -369,20 +384,20 @@ fun OverrideApp(activity: ComponentActivity) {
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(9.dp))
+                                .clip(RoundedCornerShape(10.dp))
                                 .background(if (active) accent else Color.Transparent)
                                 .clickable {
                                     buzz()
                                     tab = idx
                                 }
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 10.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = title,
                                 color = if (active) Color.Black else TextDim,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Bold,
                                 maxLines = 1
                             )
                         }
@@ -403,15 +418,17 @@ fun OverrideApp(activity: ComponentActivity) {
                     val overlayOk = Settings.canDrawOverlays(context)
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(gap),
-                        contentPadding = PaddingValues(bottom = 24.dp)
+                        contentPadding = PaddingValues(bottom = 28.dp)
                     ) {
                         item {
                             SimpleCard(pad) {
-                                Text("System & Schnellzugriff", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                Spacer(Modifier.height(8.dp))
+                                Text("Steuerzentrale", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                Spacer(Modifier.height(4.dp))
+                                Text("Auto-Stopp bei Bildschirm aus & schnelles System-Menü.", color = TextDim, fontSize = 12.sp)
+                                Spacer(Modifier.height(12.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     ActionPill(
-                                        text = if (overlayOk) "Overlay: OK" else "Overlay aus",
+                                        text = if (overlayOk) "Overlay: Aktiv" else "Overlay aus",
                                         active = overlayOk,
                                         accent = accent,
                                         modifier = Modifier.weight(1f)
@@ -420,7 +437,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                         openOverlaySettings(context)
                                     }
                                     ActionPill(
-                                        text = if (a11yOk) "Service: OK" else "Service aus",
+                                        text = if (a11yOk) "Service: Aktiv" else "Service aus",
                                         active = a11yOk,
                                         accent = accent,
                                         modifier = Modifier.weight(1f)
@@ -452,8 +469,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                     ) {
                                         buzz()
                                         if (macroRunning) {
-                                            macroRunning = false
-                                            statusMsg = "Macro gestoppt"
+                                            stopMacroExecution()
                                         } else {
                                             AutoTapService.instance?.lockScreenNow()
                                         }
@@ -485,8 +501,8 @@ fun OverrideApp(activity: ComponentActivity) {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
-                                        Text(m.name, color = TextLight, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                        Text("${m.steps.size} Schritte • ${m.repeatTimes}x", color = TextDim, fontSize = 12.sp)
+                                        Text(m.name, color = TextLight, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                                        Text("${m.steps.size} Schritte • ${m.repeatTimes}x Wiederholung", color = TextDim, fontSize = 12.sp)
                                     }
                                     Button(
                                         onClick = { runMacro(m) },
@@ -507,7 +523,7 @@ fun OverrideApp(activity: ComponentActivity) {
 
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(gap),
-                        contentPadding = PaddingValues(bottom = 24.dp)
+                        contentPadding = PaddingValues(bottom = 28.dp)
                     ) {
                         item {
                             SimpleCard(pad) {
@@ -516,8 +532,8 @@ fun OverrideApp(activity: ComponentActivity) {
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Auto-Clicker & Swipe", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                    Text("Aktionen: $actionCount", color = accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("Auto-Clicker & Swipe", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                    Text("Aktionen: $actionCount", color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                                 if (!a11yOk || !overlayOk) {
                                     Spacer(Modifier.height(6.dp))
@@ -534,9 +550,9 @@ fun OverrideApp(activity: ComponentActivity) {
                                         val sel = idx == safeIdx
                                         Box(
                                             modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
+                                                .clip(RoundedCornerShape(10.dp))
                                                 .background(if (sel) accent else SoftBg)
-                                                .padding(horizontal = 12.dp, vertical = 7.dp)
+                                                .padding(horizontal = 12.dp, vertical = 8.dp)
                                                 .clickable {
                                                     buzz()
                                                     selectedPointIdx = idx
@@ -554,10 +570,10 @@ fun OverrideApp(activity: ComponentActivity) {
                                     if (points.size < 8) {
                                         Box(
                                             modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
+                                                .clip(RoundedCornerShape(10.dp))
                                                 .background(SoftBg)
-                                                .border(1.dp, accent, RoundedCornerShape(8.dp))
-                                                .padding(horizontal = 10.dp, vertical = 7.dp)
+                                                .border(1.dp, accent, RoundedCornerShape(10.dp))
+                                                .padding(horizontal = 10.dp, vertical = 8.dp)
                                                 .clickable {
                                                     buzz()
                                                     val nextId = points.size + 1
@@ -572,9 +588,9 @@ fun OverrideApp(activity: ComponentActivity) {
                                     if (points.size > 1) {
                                         Box(
                                             modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
+                                                .clip(RoundedCornerShape(10.dp))
                                                 .background(SoftBg)
-                                                .padding(horizontal = 10.dp, vertical = 7.dp)
+                                                .padding(horizontal = 10.dp, vertical = 8.dp)
                                                 .clickable {
                                                     buzz()
                                                     points = points.dropLast(1)
@@ -726,15 +742,15 @@ fun OverrideApp(activity: ComponentActivity) {
                                         Box(
                                             modifier = Modifier
                                                 .weight(1f)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(if (sel) accent.copy(alpha = 0.2f) else SoftBg)
-                                                .border(1.dp, if (sel) accent else LineColor, RoundedCornerShape(8.dp))
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(if (sel) accent.copy(alpha = 0.22f) else SoftBg)
+                                                .border(1.dp, if (sel) accent else LineColor, RoundedCornerShape(10.dp))
                                                 .clickable {
                                                     buzz()
                                                     stopMode = m
                                                     syncOverlayNow()
                                                 }
-                                                .padding(vertical = 8.dp),
+                                                .padding(vertical = 9.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Text(m.label, color = TextLight, fontSize = 11.sp, maxLines = 1)
@@ -788,11 +804,12 @@ fun OverrideApp(activity: ComponentActivity) {
                                                     points = syncedCfg.points
                                                     selectedPointIdx = syncedCfg.selectedIndex
                                                     autoTapRunning = running
+                                                    overlayActive = OverlayManager.isOverlayVisible()
                                                     if (count > 0) actionCount = count
                                                     statusMsg = if (running) "Overlay aktiv • #$actionCount" else "Overlay bereit"
                                                 }
                                                 overlayActive = true
-                                                statusMsg = "Overlay sichtbar (⚙ für Optionen)"
+                                                statusMsg = "Großes Overlay aktiv (⚙ für Optionen)"
                                             }
                                         },
                                         border = BorderStroke(1.dp, accent),
@@ -812,7 +829,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                                 return@Button
                                             }
                                             if (autoTapRunning) {
-                                                svc.stopAutoTap()
+                                                svc.stopAutoTap(reason = null)
                                                 autoTapRunning = false
                                                 statusMsg = "Gestoppt"
                                             } else {
@@ -826,9 +843,9 @@ fun OverrideApp(activity: ComponentActivity) {
                                                     maxDurationMs = computeMaxDurationMs(),
                                                     jitterPx = jitterPx.toIntOrNull() ?: 0,
                                                     onStepTick = { total, _ -> actionCount = total },
-                                                    onFinished = {
+                                                    onFinished = { reason ->
                                                         autoTapRunning = false
-                                                        statusMsg = "Fertig"
+                                                        statusMsg = reason
                                                     }
                                                 )
                                             }
@@ -848,7 +865,7 @@ fun OverrideApp(activity: ComponentActivity) {
                 2 -> {
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(gap),
-                        contentPadding = PaddingValues(bottom = 24.dp)
+                        contentPadding = PaddingValues(bottom = 28.dp)
                     ) {
                         item {
                             if (editingMacroId == null) {
@@ -865,7 +882,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                 }
                             } else {
                                 SimpleCard(pad) {
-                                    Text("Macro bearbeiten", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Text("Macro-Editor", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                     Spacer(Modifier.height(8.dp))
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         OutlinedTextField(
@@ -888,7 +905,7 @@ fun OverrideApp(activity: ComponentActivity) {
 
                                     Spacer(Modifier.height(8.dp))
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        listOf("WAIT" to "Warten", "TAP" to "Klick", "SWIPE" to "Swipe", "TORCH" to "Licht", "LOCK" to "Sperren").forEach { (key, title) ->
+                                        listOf("WAIT" to "Warten", "TAP" to "Klick", "SWIPE" to "Swipe", "TORCH" to "Licht", "HOME" to "Home", "LOCK" to "Sperren").forEach { (key, title) ->
                                             val active = stepType == key
                                             Box(
                                                 modifier = Modifier
@@ -898,7 +915,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                                         buzz()
                                                         stepType = key
                                                     }
-                                                    .padding(horizontal = 9.dp, vertical = 6.dp)
+                                                    .padding(horizontal = 8.dp, vertical = 7.dp)
                                             ) {
                                                 Text(title, color = if (active) Color.Black else TextLight, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                             }
@@ -951,11 +968,12 @@ fun OverrideApp(activity: ComponentActivity) {
                                                     stepValB.toFloatOrNull() ?: 1400f,
                                                     stepValA.toFloatOrNull() ?: 540f,
                                                     stepValD.toFloatOrNull() ?: 700f,
-                                                    220L
+                                                    200L
                                                 )
                                                 "TORCH" -> MacroStep.TorchStep(stepValA == "1")
+                                                "HOME" -> MacroStep.HomeStep
                                                 "LOCK" -> MacroStep.LockScreenStep
-                                                else -> MacroStep.WaitStep((stepValA.toLongOrNull() ?: 400L).coerceAtLeast(30L))
+                                                else -> MacroStep.WaitStep((stepValA.toLongOrNull() ?: 350L).coerceAtLeast(30L))
                                             }
                                             draftSteps = draftSteps + added
                                         },
@@ -966,7 +984,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                     Spacer(Modifier.height(6.dp))
                                     draftSteps.forEachIndexed { idx, st ->
                                         Row(
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
@@ -1054,11 +1072,11 @@ fun OverrideApp(activity: ComponentActivity) {
                 3 -> {
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(gap),
-                        contentPadding = PaddingValues(bottom = 24.dp)
+                        contentPadding = PaddingValues(bottom = 28.dp)
                     ) {
                         item {
                             SimpleCard(pad) {
-                                Text("Design & Komfort", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text("Design & Komfort", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                                 Spacer(Modifier.height(10.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     AccentTheme.entries.forEach { theme ->
@@ -1066,9 +1084,9 @@ fun OverrideApp(activity: ComponentActivity) {
                                         Box(
                                             modifier = Modifier
                                                 .weight(1f)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(if (selected) theme.color.copy(alpha = 0.2f) else SoftBg)
-                                                .border(1.dp, if (selected) theme.color else LineColor, RoundedCornerShape(8.dp))
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(if (selected) theme.color.copy(alpha = 0.22f) else SoftBg)
+                                                .border(1.dp, if (selected) theme.color else LineColor, RoundedCornerShape(10.dp))
                                                 .clickable {
                                                     buzz()
                                                     accentTheme = theme
@@ -1123,7 +1141,7 @@ fun OverrideApp(activity: ComponentActivity) {
                         }
 
                         items(filteredApps, key = { it.packageName }) { app ->
-                            SimpleCard(10.dp) {
+                            SimpleCard(12.dp) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1174,8 +1192,8 @@ private fun SimpleCard(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = CardBg,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, LineColor.copy(alpha = 0.85f))
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, LineColor.copy(alpha = 0.9f))
     ) {
         Column(modifier = Modifier.padding(padding), content = content)
     }
@@ -1191,11 +1209,11 @@ private fun ActionPill(
 ) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (active) accent.copy(alpha = 0.2f) else SoftBg)
-            .border(1.dp, if (active) accent else LineColor, RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(11.dp))
+            .background(if (active) accent.copy(alpha = 0.22f) else SoftBg)
+            .border(1.dp, if (active) accent else LineColor, RoundedCornerShape(11.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 10.dp, horizontal = 8.dp),
+            .padding(vertical = 11.dp, horizontal = 8.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(text = text, color = TextLight, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
