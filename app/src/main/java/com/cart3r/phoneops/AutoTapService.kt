@@ -14,7 +14,7 @@ data class ClickPoint(
     val isSwipe: Boolean = false,
     val endX: Float? = null,
     val endY: Float? = null,
-    val swipeDurationMs: Long = 250L
+    val swipeDurationMs: Long = 220L
 )
 
 class AutoTapService : AccessibilityService() {
@@ -43,25 +43,28 @@ class AutoTapService : AccessibilityService() {
 
     fun performPointGesture(
         point: ClickPoint,
-        tapDurationMs: Long = 55L,
+        tapDurationMs: Long = 35L,
         jitterPx: Int = 0,
         onDone: ((Boolean) -> Unit)? = null
     ) {
         val jx = if (jitterPx > 0) (-jitterPx..jitterPx).random().toFloat() else 0f
         val jy = if (jitterPx > 0) (-jitterPx..jitterPx).random().toFloat() else 0f
-        val startX = (point.x + jx).coerceAtLeast(1f)
-        val startY = (point.y + jy).coerceAtLeast(1f)
+        val sx = (point.x + jx).coerceAtLeast(1f)
+        val sy = (point.y + jy).coerceAtLeast(1f)
 
         val path = Path().apply {
-            moveTo(startX, startY)
+            moveTo(sx, sy)
             if (point.isSwipe && point.endX != null && point.endY != null) {
-                lineTo(point.endX.coerceAtLeast(1f), point.endY.coerceAtLeast(1f))
+                val ex = (point.endX + jx).coerceAtLeast(1f)
+                val ey = (point.endY + jy).coerceAtLeast(1f)
+                lineTo(ex, ey)
             }
         }
+
         val duration = if (point.isSwipe) {
-            point.swipeDurationMs.coerceIn(80L, 4000L)
+            point.swipeDurationMs.coerceIn(70L, 2500L)
         } else {
-            tapDurationMs.coerceIn(15L, 1000L)
+            tapDurationMs.coerceIn(15L, 400L)
         }
 
         val stroke = GestureDescription.StrokeDescription(path, 0L, duration)
@@ -102,7 +105,7 @@ class AutoTapService : AccessibilityService() {
         var completedCycles = 0
         var pointIdx = 0
         val startTime = System.currentTimeMillis()
-        val safeInterval = intervalMs.coerceAtLeast(40L)
+        val safeInterval = intervalMs.coerceAtLeast(25L)
 
         val runner = object : Runnable {
             override fun run() {
@@ -121,8 +124,11 @@ class AutoTapService : AccessibilityService() {
 
                 val currentPoint = points[pointIdx]
                 totalActions += 1
-                performPointGesture(currentPoint, jitterPx = jitterPx) {
-                    handler.post { onStepTick(totalActions, pointIdx) }
+                val stepIndexForUi = pointIdx
+                performPointGesture(currentPoint, jitterPx = jitterPx) { _ ->
+                    handler.post {
+                        if (isRunningAutoTap) onStepTick(totalActions, stepIndexForUi)
+                    }
                 }
 
                 pointIdx += 1
