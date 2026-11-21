@@ -7,10 +7,20 @@ import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 
+data class ClickPoint(
+    val id: Int,
+    val x: Float,
+    val y: Float,
+    val isSwipe: Boolean = false,
+    val endX: Float? = null,
+    val endY: Float? = null,
+    val swipeDurationMs: Long = 250L
+)
+
 class AutoTapService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
-    private var tapRunnable: Runnable? = null
+    private var loopRunnable: Runnable? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -31,9 +41,30 @@ class AutoTapService : AccessibilityService() {
         super.onDestroy()
     }
 
-    fun tapAt(x: Float, y: Float, durationMs: Long = 50L, onDone: ((Boolean) -> Unit)? = null) {
-        val path = Path().apply { moveTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs.coerceAtLeast(10L))
+    fun performPointGesture(
+        point: ClickPoint,
+        tapDurationMs: Long = 55L,
+        jitterPx: Int = 0,
+        onDone: ((Boolean) -> Unit)? = null
+    ) {
+        val jx = if (jitterPx > 0) (-jitterPx..jitterPx).random().toFloat() else 0f
+        val jy = if (jitterPx > 0) (-jitterPx..jitterPx).random().toFloat() else 0f
+        val startX = (point.x + jx).coerceAtLeast(1f)
+        val startY = (point.y + jy).coerceAtLeast(1f)
+
+        val path = Path().apply {
+            moveTo(startX, startY)
+            if (point.isSwipe && point.endX != null && point.endY != null) {
+                lineTo(point.endX.coerceAtLeast(1f), point.endY.coerceAtLeast(1f))
+            }
+        }
+        val duration = if (point.isSwipe) {
+            point.swipeDurationMs.coerceIn(80L, 4000L)
+        } else {
+            tapDurationMs.coerceIn(15L, 1000L)
+        }
+
+        val stroke = GestureDescription.StrokeDescription(path, 0L, duration)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         val dispatched = dispatchGesture(
             gesture,
@@ -51,18 +82,25 @@ class AutoTapService : AccessibilityService() {
         if (!dispatched) onDone?.invoke(false)
     }
 
-    fun startAutoTap(
-        x: Float,
-        y: Float,
+    fun startSequence(
+        points: List<ClickPoint>,
         intervalMs: Long,
-        maxCount: Int?,
+        maxCycles: Int?,
         maxDurationMs: Long?,
-        onTick: (Int) -> Unit,
+        jitterPx: Int = 0,
+        onStepTick: (totalActions: Int, activePointIndex: Int) -> Unit,
         onFinished: () -> Unit
     ) {
         stopAutoTap()
+        if (points.isEmpty()) {
+            onFinished()
+            return
+        }
+
         isRunningAutoTap = true
-        var count = 0
+        var totalActions = 0
+        var completedCycles = 0
+        var pointIdx = 0
         val startTime = System.currentTimeMillis()
         val safeInterval = intervalMs.coerceAtLeast(40L)
 
@@ -70,7 +108,7 @@ class AutoTapService : AccessibilityService() {
             override fun run() {
                 if (!isRunningAutoTap) return
                 val elapsed = System.currentTimeMillis() - startTime
-                if (maxCount != null && count >= maxCount) {
+                if (maxCycles != null && completedCycles >= maxCycles) {
                     stopAutoTap()
                     handler.post(onFinished)
                     return
@@ -80,29 +118,60 @@ class AutoTapService : AccessibilityService() {
                     handler.post(onFinished)
                     return
                 }
-                count += 1
-                tapAt(x, y) {
-                    handler.post { onTick(count) }
+
+                val currentPoint = points[pointIdx]
+                totalActions += 1
+                performPointGesture(currentPoint, jitterPx = jitterPx) {
+                    handler.post { onStepTick(totalActions, pointIdx) }
                 }
+
+                pointIdx += 1
+                if (pointIdx >= points.size) {
+                    pointIdx = 0
+                    completedCycles += 1
+                }
+
+                if (maxCycles != null && completedCycles >= maxCycles) {
+                    stopAutoTap()
+                    handler.post(onFinished)
+                    return
+                }
+
                 handler.postDelayed(this, safeInterval)
             }
         }
-        tapRunnable = runner
+        loopRunnable = runner
         handler.post(runner)
     }
 
     fun stopAutoTap() {
         isRunningAutoTap = false
-        tapRunnable?.let { handler.removeCallbacks(it) }
-        tapRunnable = null
+        loopRunnable?.let { handler.removeCallbacks(it) }
+        loopRunnable = null
     }
 
-    fun lockScreenNow(): Boolean {
-        return try {
-            performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
-        } catch (_: Exception) {
-            false
-        }
+    fun lockScreenNow(): Boolean = try {
+        performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+    } catch (_: Exception) {
+        false
+    }
+
+    fun goHomeNow(): Boolean = try {
+        performGlobalAction(GLOBAL_ACTION_HOME)
+    } catch (_: Exception) {
+        false
+    }
+
+    fun goBackNow(): Boolean = try {
+        performGlobalAction(GLOBAL_ACTION_BACK)
+    } catch (_: Exception) {
+        false
+    }
+
+    fun openRecentsNow(): Boolean = try {
+        performGlobalAction(GLOBAL_ACTION_RECENTS)
+    } catch (_: Exception) {
+        false
     }
 
     companion object {
