@@ -31,7 +31,7 @@ class AutoTapService : AccessibilityService() {
         super.onDestroy()
     }
 
-    fun tapAt(x: Float, y: Float, durationMs: Long = 60L, onDone: ((Boolean) -> Unit)? = null) {
+    fun tapAt(x: Float, y: Float, durationMs: Long = 50L, onDone: ((Boolean) -> Unit)? = null) {
         val path = Path().apply { moveTo(x, y) }
         val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs.coerceAtLeast(10L))
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
@@ -56,20 +56,28 @@ class AutoTapService : AccessibilityService() {
         y: Float,
         intervalMs: Long,
         maxCount: Int?,
+        maxDurationMs: Long?,
         onTick: (Int) -> Unit,
         onFinished: () -> Unit
     ) {
         stopAutoTap()
         isRunningAutoTap = true
         var count = 0
-        val safeInterval = intervalMs.coerceAtLeast(80L)
+        val startTime = System.currentTimeMillis()
+        val safeInterval = intervalMs.coerceAtLeast(40L)
 
         val runner = object : Runnable {
             override fun run() {
                 if (!isRunningAutoTap) return
+                val elapsed = System.currentTimeMillis() - startTime
                 if (maxCount != null && count >= maxCount) {
                     stopAutoTap()
-                    onFinished()
+                    handler.post(onFinished)
+                    return
+                }
+                if (maxDurationMs != null && elapsed >= maxDurationMs) {
+                    stopAutoTap()
+                    handler.post(onFinished)
                     return
                 }
                 count += 1
