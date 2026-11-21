@@ -82,7 +82,6 @@ fun OverrideApp() {
     var torchOn by remember { mutableStateOf(false) }
     var statusMsg by remember { mutableStateOf("Ready") }
 
-    // Auto-clicker state
     var tapX by remember { mutableStateOf("540") }
     var tapY by remember { mutableStateOf("1200") }
     var intervalMs by remember { mutableStateOf("500") }
@@ -91,7 +90,6 @@ fun OverrideApp() {
     var tapCount by remember { mutableIntStateOf(0) }
     var autoTapRunning by remember { mutableStateOf(false) }
 
-    // App search state
     var appQuery by remember { mutableStateOf("") }
     val userApps = remember { loadApps(context) }
 
@@ -268,6 +266,16 @@ fun OverrideApp() {
                                         openAccessibilitySettings(context)
                                         statusMsg = "Opened Accessibility settings"
                                     }
+                                }
+                                Spacer(Modifier.height(10.dp))
+                                ActionPill(
+                                    text = if (Settings.canDrawOverlays(context)) "Overlay: ALLOWED" else "Allow Overlay",
+                                    active = Settings.canDrawOverlays(context),
+                                    accent = accent,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    openOverlaySettings(context)
+                                    statusMsg = "Opened Overlay settings"
                                 }
                             }
                         }
@@ -635,6 +643,15 @@ private fun fieldColors(accent: Color) = OutlinedTextFieldDefaults.colors(
 private fun openAccessibilitySettings(context: Context) {
     context.startActivity(
         Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+    )
+}
+
+private fun openOverlaySettings(context: Context) {
+    context.startActivity(
+        Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:${context.packageName}")
+        ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
     )
 }
 
