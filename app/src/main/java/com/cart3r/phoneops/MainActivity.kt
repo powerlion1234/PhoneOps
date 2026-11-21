@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.HapticFeedbackConstants
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -35,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,17 +45,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.util.Locale
 
-private val BgBlack = Color(0xFF060608)
-private val CardBg = Color(0xFF0F1116)
-private val SoftBg = Color(0xFF171A22)
-private val TextLight = Color(0xFFF3F5F8)
-private val TextDim = Color(0xFF8B93A3)
-private val LineColor = Color(0xFF232734)
+private val BgBlack = Color(0xFF07080B)
+private val CardBg = Color(0xFF11141C)
+private val SoftBg = Color(0xFF191D28)
+private val TextLight = Color(0xFFF5F7FA)
+private val TextDim = Color(0xFF949DB0)
+private val LineColor = Color(0xFF262C3C)
 
 enum class AccentTheme(val label: String, val color: Color) {
-    CRIMSON("Crimson", Color(0xFFFF1E38)),
-    CYAN("Cyan", Color(0xFF00D8FF)),
-    AMBER("Amber", Color(0xFFFFA000))
+    CRIMSON("Crimson", Color(0xFFFF243F)),
+    CYAN("Cyan", Color(0xFF00DCFF)),
+    AMBER("Amber", Color(0xFFFFAA00))
 }
 
 enum class StopMode(val label: String) {
@@ -96,12 +98,14 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun OverrideApp(activity: ComponentActivity) {
     val context = LocalContext.current
+    val view = LocalView.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     var tab by remember { mutableIntStateOf(0) }
     var accentTheme by remember { mutableStateOf(AccentTheme.CRIMSON) }
     var compactCards by remember { mutableStateOf(false) }
     var keepScreenOn by remember { mutableStateOf(false) }
+    var hapticOn by remember { mutableStateOf(true) }
 
     var torchOn by remember { mutableStateOf(false) }
     var statusMsg by remember { mutableStateOf("Bereit") }
@@ -111,12 +115,12 @@ fun OverrideApp(activity: ComponentActivity) {
         mutableStateOf(
             listOf(
                 ClickPoint(1, 540f, 1100f),
-                ClickPoint(2, 540f, 1450f, isSwipe = true, endX = 540f, endY = 850f, swipeDurationMs = 250L)
+                ClickPoint(2, 540f, 1450f, isSwipe = true, endX = 540f, endY = 900f, swipeDurationMs = 220L)
             )
         )
     }
     var selectedPointIdx by remember { mutableIntStateOf(0) }
-    var intervalValue by remember { mutableStateOf("500") }
+    var intervalValue by remember { mutableStateOf("250") }
     var useSeconds by remember { mutableStateOf(false) }
     var stopMode by remember { mutableStateOf(StopMode.INFINITE) }
     var stopValue by remember { mutableStateOf("10") }
@@ -133,10 +137,10 @@ fun OverrideApp(activity: ComponentActivity) {
                     name = "Scroll & Tap Ablauf",
                     repeatTimes = 2,
                     steps = listOf(
-                        MacroStep.SwipeStep(540f, 1500f, 540f, 700f, 250L),
-                        MacroStep.WaitStep(600L),
+                        MacroStep.SwipeStep(540f, 1500f, 540f, 750f, 220L),
+                        MacroStep.WaitStep(350L),
                         MacroStep.TapStep(540f, 1100f),
-                        MacroStep.WaitStep(500L)
+                        MacroStep.WaitStep(300L)
                     )
                 ),
                 CustomMacro(
@@ -145,7 +149,7 @@ fun OverrideApp(activity: ComponentActivity) {
                     repeatTimes = 1,
                     steps = listOf(
                         MacroStep.TorchStep(false),
-                        MacroStep.WaitStep(800L),
+                        MacroStep.WaitStep(600L),
                         MacroStep.LockScreenStep
                     )
                 )
@@ -158,7 +162,7 @@ fun OverrideApp(activity: ComponentActivity) {
     var draftRepeat by remember { mutableStateOf("1") }
     var draftSteps by remember { mutableStateOf<List<MacroStep>>(emptyList()) }
     var stepType by remember { mutableStateOf("WAIT") }
-    var stepValA by remember { mutableStateOf("600") }
+    var stepValA by remember { mutableStateOf("400") }
     var stepValB by remember { mutableStateOf("1100") }
     var stepValC by remember { mutableStateOf("540") }
     var stepValD by remember { mutableStateOf("800") }
@@ -177,6 +181,15 @@ fun OverrideApp(activity: ComponentActivity) {
     val pad = if (compactCards) 10.dp else 14.dp
     val gap = if (compactCards) 8.dp else 12.dp
 
+    fun buzz() {
+        if (hapticOn) {
+            try {
+                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     LaunchedEffect(keepScreenOn) {
         if (keepScreenOn) {
             activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -186,8 +199,8 @@ fun OverrideApp(activity: ComponentActivity) {
     }
 
     fun computeIntervalMs(): Long {
-        val raw = intervalValue.toLongOrNull() ?: 500L
-        return if (useSeconds) (raw * 1000L).coerceAtLeast(100L) else raw.coerceAtLeast(40L)
+        val raw = intervalValue.toLongOrNull() ?: 250L
+        return if (useSeconds) (raw * 1000L).coerceAtLeast(100L) else raw.coerceAtLeast(25L)
     }
 
     fun computeMaxCycles(): Int? =
@@ -196,11 +209,27 @@ fun OverrideApp(activity: ComponentActivity) {
     fun computeMaxDurationMs(): Long? =
         if (stopMode == StopMode.DURATION) ((stopValue.toLongOrNull() ?: 10L) * 1000L).coerceAtLeast(500L) else null
 
+    fun syncOverlayNow() {
+        if (overlayActive) {
+            OverlayManager.updateFromApp(
+                context = context,
+                newPoints = points,
+                selectedIndex = selectedPointIdx,
+                intervalMs = computeIntervalMs(),
+                maxCycles = computeMaxCycles(),
+                maxDurationMs = computeMaxDurationMs(),
+                jitterPx = jitterPx.toIntOrNull() ?: 0,
+                accentHex = accent.toArgb()
+            )
+        }
+    }
+
     fun runMacro(macro: CustomMacro) {
         if (macroRunning) {
             statusMsg = "Macro läuft bereits"
             return
         }
+        buzz()
         macroRunning = true
         val expanded = buildList {
             repeat(macro.repeatTimes.coerceAtLeast(1)) { addAll(macro.steps) }
@@ -220,7 +249,7 @@ fun OverrideApp(activity: ComponentActivity) {
             when (val st = expanded[i]) {
                 is MacroStep.WaitStep -> {
                     statusMsg = st.label
-                    mainHandler.postDelayed({ runIdx(i + 1) }, st.ms.coerceAtLeast(40L))
+                    mainHandler.postDelayed({ runIdx(i + 1) }, st.ms.coerceAtLeast(30L))
                 }
                 is MacroStep.TapStep -> {
                     val svc = AutoTapService.instance
@@ -257,22 +286,22 @@ fun OverrideApp(activity: ComponentActivity) {
                 is MacroStep.TorchStep -> {
                     if (setTorchState(context, st.enabled)) torchOn = st.enabled
                     statusMsg = st.label
-                    mainHandler.postDelayed({ runIdx(i + 1) }, 150L)
+                    mainHandler.postDelayed({ runIdx(i + 1) }, 120L)
                 }
                 is MacroStep.SettingsStep -> {
                     openSettingsAction(context, st.action)
                     statusMsg = st.label
-                    mainHandler.postDelayed({ runIdx(i + 1) }, 250L)
+                    mainHandler.postDelayed({ runIdx(i + 1) }, 200L)
                 }
                 is MacroStep.HomeStep -> {
                     AutoTapService.instance?.goHomeNow()
                     statusMsg = st.label
-                    mainHandler.postDelayed({ runIdx(i + 1) }, 200L)
+                    mainHandler.postDelayed({ runIdx(i + 1) }, 180L)
                 }
                 is MacroStep.BackStep -> {
                     AutoTapService.instance?.goBackNow()
                     statusMsg = st.label
-                    mainHandler.postDelayed({ runIdx(i + 1) }, 200L)
+                    mainHandler.postDelayed({ runIdx(i + 1) }, 180L)
                 }
                 is MacroStep.LockScreenStep -> {
                     AutoTapService.instance?.lockScreenNow()
@@ -294,7 +323,7 @@ fun OverrideApp(activity: ComponentActivity) {
             editingMacroId = "NEW_${System.currentTimeMillis()}"
             draftName = "Neues Macro ${macros.size + 1}"
             draftRepeat = "1"
-            draftSteps = listOf(MacroStep.WaitStep(500L), MacroStep.TapStep(540f, 1100f))
+            draftSteps = listOf(MacroStep.WaitStep(400L), MacroStep.TapStep(540f, 1100f))
         }
     }
 
@@ -330,8 +359,8 @@ fun OverrideApp(activity: ComponentActivity) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(CardBg, RoundedCornerShape(10.dp))
-                        .border(1.dp, LineColor, RoundedCornerShape(10.dp))
+                        .background(CardBg, RoundedCornerShape(12.dp))
+                        .border(1.dp, LineColor, RoundedCornerShape(12.dp))
                         .padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
@@ -340,9 +369,12 @@ fun OverrideApp(activity: ComponentActivity) {
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(9.dp))
                                 .background(if (active) accent else Color.Transparent)
-                                .clickable { tab = idx }
+                                .clickable {
+                                    buzz()
+                                    tab = idx
+                                }
                                 .padding(vertical = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -375,7 +407,7 @@ fun OverrideApp(activity: ComponentActivity) {
                     ) {
                         item {
                             SimpleCard(pad) {
-                                Text("System & Rechte", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text("System & Schnellzugriff", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                 Spacer(Modifier.height(8.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     ActionPill(
@@ -383,13 +415,19 @@ fun OverrideApp(activity: ComponentActivity) {
                                         active = overlayOk,
                                         accent = accent,
                                         modifier = Modifier.weight(1f)
-                                    ) { openOverlaySettings(context) }
+                                    ) {
+                                        buzz()
+                                        openOverlaySettings(context)
+                                    }
                                     ActionPill(
                                         text = if (a11yOk) "Service: OK" else "Service aus",
                                         active = a11yOk,
                                         accent = accent,
                                         modifier = Modifier.weight(1f)
-                                    ) { openAccessibilitySettings(context) }
+                                    ) {
+                                        buzz()
+                                        openAccessibilitySettings(context)
+                                    }
                                 }
                                 Spacer(Modifier.height(8.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -399,6 +437,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                         accent = accent,
                                         modifier = Modifier.weight(1f)
                                     ) {
+                                        buzz()
                                         val next = !torchOn
                                         if (setTorchState(context, next)) {
                                             torchOn = next
@@ -411,6 +450,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                         accent = accent,
                                         modifier = Modifier.weight(1f)
                                     ) {
+                                        buzz()
                                         if (macroRunning) {
                                             macroRunning = false
                                             statusMsg = "Macro gestoppt"
@@ -422,12 +462,15 @@ fun OverrideApp(activity: ComponentActivity) {
                                 Spacer(Modifier.height(8.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     ActionPill("Home", false, accent, Modifier.weight(1f)) {
+                                        buzz()
                                         AutoTapService.instance?.goHomeNow()
                                     }
                                     ActionPill("Zurück", false, accent, Modifier.weight(1f)) {
+                                        buzz()
                                         AutoTapService.instance?.goBackNow()
                                     }
                                     ActionPill("Verlauf", false, accent, Modifier.weight(1f)) {
+                                        buzz()
                                         AutoTapService.instance?.openRecentsNow()
                                     }
                                 }
@@ -448,7 +491,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                     Button(
                                         onClick = { runMacro(m) },
                                         colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.Black),
-                                        shape = RoundedCornerShape(8.dp)
+                                        shape = RoundedCornerShape(10.dp)
                                     ) { Text("Start", fontWeight = FontWeight.Bold) }
                                 }
                             }
@@ -473,13 +516,13 @@ fun OverrideApp(activity: ComponentActivity) {
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Multi-Punkt & Swipe Auto-Clicker", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                    Text("Auto-Clicker & Swipe", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                     Text("Aktionen: $actionCount", color = accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                 }
                                 if (!a11yOk || !overlayOk) {
                                     Spacer(Modifier.height(6.dp))
                                     Text(
-                                        "Hinweis: Wenn nichts klickt, prüfe Overlay & Bedienungshilfen (inkl. Eingeschränkte Einstellungen).",
+                                        "Hinweis: Overlay & Bedienungshilfen (inkl. Eingeschränkte Einstellungen) aktivieren.",
                                         color = TextDim,
                                         fontSize = 11.sp
                                     )
@@ -494,10 +537,14 @@ fun OverrideApp(activity: ComponentActivity) {
                                                 .clip(RoundedCornerShape(8.dp))
                                                 .background(if (sel) accent else SoftBg)
                                                 .padding(horizontal = 12.dp, vertical = 7.dp)
-                                                .clickable { selectedPointIdx = idx }
+                                                .clickable {
+                                                    buzz()
+                                                    selectedPointIdx = idx
+                                                    syncOverlayNow()
+                                                }
                                         ) {
                                             Text(
-                                                text = "P${pt.id}${if (pt.isSwipe) "→" else ""}",
+                                                text = "P${pt.id}${if (pt.isSwipe) "↔" else ""}",
                                                 color = if (sel) Color.Black else TextLight,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold
@@ -512,9 +559,11 @@ fun OverrideApp(activity: ComponentActivity) {
                                                 .border(1.dp, accent, RoundedCornerShape(8.dp))
                                                 .padding(horizontal = 10.dp, vertical = 7.dp)
                                                 .clickable {
+                                                    buzz()
                                                     val nextId = points.size + 1
                                                     points = points + ClickPoint(nextId, 540f, 1000f + nextId * 90f)
                                                     selectedPointIdx = points.lastIndex
+                                                    syncOverlayNow()
                                                 }
                                         ) {
                                             Text("+ Punkt", color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -527,8 +576,10 @@ fun OverrideApp(activity: ComponentActivity) {
                                                 .background(SoftBg)
                                                 .padding(horizontal = 10.dp, vertical = 7.dp)
                                                 .clickable {
+                                                    buzz()
                                                     points = points.dropLast(1)
                                                     selectedPointIdx = (points.size - 1).coerceAtLeast(0)
+                                                    syncOverlayNow()
                                                 }
                                         ) {
                                             Text("- Pkt", color = TextDim, fontSize = 12.sp)
@@ -544,6 +595,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                         onValueChange = { txt ->
                                             val v = txt.filter { it.isDigit() }.toFloatOrNull() ?: 0f
                                             points = points.mapIndexed { i, p -> if (i == safeIdx) p.copy(x = v) else p }
+                                            syncOverlayNow()
                                         },
                                         label = { Text("X", color = TextDim) },
                                         singleLine = true,
@@ -555,6 +607,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                         onValueChange = { txt ->
                                             val v = txt.filter { it.isDigit() }.toFloatOrNull() ?: 0f
                                             points = points.mapIndexed { i, p -> if (i == safeIdx) p.copy(y = v) else p }
+                                            syncOverlayNow()
                                         },
                                         label = { Text("Y", color = TextDim) },
                                         singleLine = true,
@@ -562,25 +615,42 @@ fun OverrideApp(activity: ComponentActivity) {
                                         colors = fieldColors(accent)
                                     )
                                     ActionPill(
-                                        text = if (activePt.isSwipe) "Modus: Swipe" else "Modus: Tap",
+                                        text = if (activePt.isSwipe) "Swipe: AN" else "Tap: AN",
                                         active = activePt.isSwipe,
                                         accent = accent,
                                         modifier = Modifier.weight(1.1f)
                                     ) {
+                                        buzz()
                                         points = points.mapIndexed { i, p ->
                                             if (i == safeIdx) {
                                                 val toSwipe = !p.isSwipe
                                                 p.copy(
                                                     isSwipe = toSwipe,
                                                     endX = p.endX ?: p.x,
-                                                    endY = p.endY ?: (p.y - 400f)
+                                                    endY = p.endY ?: (p.y - 420f)
                                                 )
                                             } else p
                                         }
+                                        syncOverlayNow()
                                     }
                                 }
 
                                 if (activePt.isSwipe) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        fun setDir(dx: Float, dy: Float) {
+                                            buzz()
+                                            points = points.mapIndexed { i, p ->
+                                                if (i == safeIdx) p.copy(endX = (p.x + dx).coerceAtLeast(1f), endY = (p.y + dy).coerceAtLeast(1f))
+                                                else p
+                                            }
+                                            syncOverlayNow()
+                                        }
+                                        ActionPill("↑ Hoch", false, accent, Modifier.weight(1f)) { setDir(0f, -450f) }
+                                        ActionPill("↓ Runter", false, accent, Modifier.weight(1f)) { setDir(0f, 450f) }
+                                        ActionPill("← Links", false, accent, Modifier.weight(1f)) { setDir(-350f, 0f) }
+                                        ActionPill("→ Rechts", false, accent, Modifier.weight(1f)) { setDir(350f, 0f) }
+                                    }
                                     Spacer(Modifier.height(8.dp))
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         OutlinedTextField(
@@ -588,6 +658,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                             onValueChange = { txt ->
                                                 val v = txt.filter { it.isDigit() }.toFloatOrNull() ?: 0f
                                                 points = points.mapIndexed { i, p -> if (i == safeIdx) p.copy(endX = v) else p }
+                                                syncOverlayNow()
                                             },
                                             label = { Text("Ziel X", color = TextDim) },
                                             singleLine = true,
@@ -599,6 +670,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                             onValueChange = { txt ->
                                                 val v = txt.filter { it.isDigit() }.toFloatOrNull() ?: 0f
                                                 points = points.mapIndexed { i, p -> if (i == safeIdx) p.copy(endY = v) else p }
+                                                syncOverlayNow()
                                             },
                                             label = { Text("Ziel Y", color = TextDim) },
                                             singleLine = true,
@@ -613,7 +685,10 @@ fun OverrideApp(activity: ComponentActivity) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = intervalValue,
-                                        onValueChange = { intervalValue = it.filter { c -> c.isDigit() } },
+                                        onValueChange = {
+                                            intervalValue = it.filter { c -> c.isDigit() }
+                                            syncOverlayNow()
+                                        },
                                         label = { Text(if (useSeconds) "Intervall (s)" else "Intervall (ms)", color = TextDim) },
                                         singleLine = true,
                                         modifier = Modifier.weight(1f),
@@ -624,10 +699,17 @@ fun OverrideApp(activity: ComponentActivity) {
                                         active = useSeconds,
                                         accent = accent,
                                         modifier = Modifier.weight(0.8f)
-                                    ) { useSeconds = !useSeconds }
+                                    ) {
+                                        buzz()
+                                        useSeconds = !useSeconds
+                                        syncOverlayNow()
+                                    }
                                     OutlinedTextField(
                                         value = jitterPx,
-                                        onValueChange = { jitterPx = it.filter { c -> c.isDigit() } },
+                                        onValueChange = {
+                                            jitterPx = it.filter { c -> c.isDigit() }
+                                            syncOverlayNow()
+                                        },
                                         label = { Text("Jitter px", color = TextDim) },
                                         singleLine = true,
                                         modifier = Modifier.weight(0.75f),
@@ -647,7 +729,11 @@ fun OverrideApp(activity: ComponentActivity) {
                                                 .clip(RoundedCornerShape(8.dp))
                                                 .background(if (sel) accent.copy(alpha = 0.2f) else SoftBg)
                                                 .border(1.dp, if (sel) accent else LineColor, RoundedCornerShape(8.dp))
-                                                .clickable { stopMode = m }
+                                                .clickable {
+                                                    buzz()
+                                                    stopMode = m
+                                                    syncOverlayNow()
+                                                }
                                                 .padding(vertical = 8.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
@@ -660,7 +746,10 @@ fun OverrideApp(activity: ComponentActivity) {
                                     Spacer(Modifier.height(8.dp))
                                     OutlinedTextField(
                                         value = stopValue,
-                                        onValueChange = { stopValue = it.filter { c -> c.isDigit() } },
+                                        onValueChange = {
+                                            stopValue = it.filter { c -> c.isDigit() }
+                                            syncOverlayNow()
+                                        },
                                         label = { Text(if (stopMode == StopMode.CYCLES) "Anzahl Zyklen" else "Dauer in Sekunden", color = TextDim) },
                                         singleLine = true,
                                         modifier = Modifier.fillMaxWidth(),
@@ -673,38 +762,41 @@ fun OverrideApp(activity: ComponentActivity) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedButton(
                                         onClick = {
+                                            buzz()
                                             if (!overlayOk) {
                                                 openOverlaySettings(context)
                                                 statusMsg = "Overlay-Recht aktivieren"
                                                 return@OutlinedButton
                                             }
                                             if (overlayActive) {
-                                                OverlayManager.hideOverlay()
+                                                OverlayManager.hideOverlay(stopService = true)
                                                 overlayActive = false
                                                 autoTapRunning = false
                                                 statusMsg = "Overlay ausgeblendet"
                                             } else {
                                                 actionCount = 0
-                                                OverlayManager.showOverlay(
-                                                    context = context,
-                                                    initialPoints = points,
+                                                val cfg = OverlayConfigState(
+                                                    points = points,
+                                                    selectedIndex = safeIdx,
                                                     intervalMs = computeIntervalMs(),
                                                     maxCycles = computeMaxCycles(),
                                                     maxDurationMs = computeMaxDurationMs(),
                                                     jitterPx = jitterPx.toIntOrNull() ?: 0,
-                                                    accentHex = accent.toArgb(),
-                                                    onPointsChanged = { updated -> points = updated },
-                                                    onRunningChanged = { running ->
-                                                        autoTapRunning = running
-                                                        statusMsg = if (running) "Overlay klickt..." else "Overlay bereit"
-                                                    },
-                                                    onActionTick = { total -> actionCount = total }
+                                                    accentHex = accent.toArgb()
                                                 )
+                                                OverlayManager.showOverlay(context, cfg) { syncedCfg, running, count ->
+                                                    points = syncedCfg.points
+                                                    selectedPointIdx = syncedCfg.selectedIndex
+                                                    autoTapRunning = running
+                                                    if (count > 0) actionCount = count
+                                                    statusMsg = if (running) "Overlay aktiv • #$actionCount" else "Overlay bereit"
+                                                }
                                                 overlayActive = true
-                                                statusMsg = "Kreise ziehen & START drücken"
+                                                statusMsg = "Overlay sichtbar (⚙ für Optionen)"
                                             }
                                         },
                                         border = BorderStroke(1.dp, accent),
+                                        shape = RoundedCornerShape(10.dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         Text(if (overlayActive) "Overlay aus" else "Overlay zeigen", color = accent, fontWeight = FontWeight.Bold)
@@ -712,6 +804,7 @@ fun OverrideApp(activity: ComponentActivity) {
 
                                     Button(
                                         onClick = {
+                                            buzz()
                                             val svc = AutoTapService.instance
                                             if (svc == null) {
                                                 openAccessibilitySettings(context)
@@ -741,6 +834,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                             }
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.Black),
+                                        shape = RoundedCornerShape(10.dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         Text(if (autoTapRunning) "Stopp" else "Start", fontWeight = FontWeight.Bold)
@@ -759,8 +853,12 @@ fun OverrideApp(activity: ComponentActivity) {
                         item {
                             if (editingMacroId == null) {
                                 Button(
-                                    onClick = { startEditor(null) },
+                                    onClick = {
+                                        buzz()
+                                        startEditor(null)
+                                    },
                                     colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.Black),
+                                    shape = RoundedCornerShape(10.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text("+ Neues Macro erstellen", fontWeight = FontWeight.Bold)
@@ -796,7 +894,10 @@ fun OverrideApp(activity: ComponentActivity) {
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(8.dp))
                                                     .background(if (active) accent else SoftBg)
-                                                    .clickable { stepType = key }
+                                                    .clickable {
+                                                        buzz()
+                                                        stepType = key
+                                                    }
                                                     .padding(horizontal = 9.dp, vertical = 6.dp)
                                             ) {
                                                 Text(title, color = if (active) Color.Black else TextLight, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
@@ -818,11 +919,20 @@ fun OverrideApp(activity: ComponentActivity) {
                                             OutlinedTextField(stepValC, { stepValC = it.filter { c -> c.isDigit() } }, label = { Text("X", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
                                             OutlinedTextField(stepValB, { stepValB = it.filter { c -> c.isDigit() } }, label = { Text("Y", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
                                         }
-                                        "SWIPE" -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            OutlinedTextField(stepValC, { stepValC = it.filter { c -> c.isDigit() } }, label = { Text("X1", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
-                                            OutlinedTextField(stepValB, { stepValB = it.filter { c -> c.isDigit() } }, label = { Text("Y1", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
-                                            OutlinedTextField(stepValA, { stepValA = it.filter { c -> c.isDigit() } }, label = { Text("X2", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
-                                            OutlinedTextField(stepValD, { stepValD = it.filter { c -> c.isDigit() } }, label = { Text("Y2", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
+                                        "SWIPE" -> {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                ActionPill("↑", false, accent, Modifier.weight(1f)) { stepValC = "540"; stepValB = "1450"; stepValA = "540"; stepValD = "750" }
+                                                ActionPill("↓", false, accent, Modifier.weight(1f)) { stepValC = "540"; stepValB = "750"; stepValA = "540"; stepValD = "1450" }
+                                                ActionPill("←", false, accent, Modifier.weight(1f)) { stepValC = "850"; stepValB = "1100"; stepValA = "220"; stepValD = "1100" }
+                                                ActionPill("→", false, accent, Modifier.weight(1f)) { stepValC = "220"; stepValB = "1100"; stepValA = "850"; stepValD = "1100" }
+                                            }
+                                            Spacer(Modifier.height(6.dp))
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                OutlinedTextField(stepValC, { stepValC = it.filter { c -> c.isDigit() } }, label = { Text("X1", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
+                                                OutlinedTextField(stepValB, { stepValB = it.filter { c -> c.isDigit() } }, label = { Text("Y1", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
+                                                OutlinedTextField(stepValA, { stepValA = it.filter { c -> c.isDigit() } }, label = { Text("X2", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
+                                                OutlinedTextField(stepValD, { stepValD = it.filter { c -> c.isDigit() } }, label = { Text("Y2", color = TextDim) }, singleLine = true, modifier = Modifier.weight(1f), colors = fieldColors(accent))
+                                            }
                                         }
                                         "TORCH" -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                             ActionPill("Licht AN", stepValA == "1", accent, Modifier.weight(1f)) { stepValA = "1" }
@@ -833,6 +943,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                     Spacer(Modifier.height(8.dp))
                                     OutlinedButton(
                                         onClick = {
+                                            buzz()
                                             val added: MacroStep = when (stepType) {
                                                 "TAP" -> MacroStep.TapStep(stepValC.toFloatOrNull() ?: 540f, stepValB.toFloatOrNull() ?: 1100f)
                                                 "SWIPE" -> MacroStep.SwipeStep(
@@ -840,11 +951,11 @@ fun OverrideApp(activity: ComponentActivity) {
                                                     stepValB.toFloatOrNull() ?: 1400f,
                                                     stepValA.toFloatOrNull() ?: 540f,
                                                     stepValD.toFloatOrNull() ?: 700f,
-                                                    250L
+                                                    220L
                                                 )
                                                 "TORCH" -> MacroStep.TorchStep(stepValA == "1")
                                                 "LOCK" -> MacroStep.LockScreenStep
-                                                else -> MacroStep.WaitStep((stepValA.toLongOrNull() ?: 500L).coerceAtLeast(50L))
+                                                else -> MacroStep.WaitStep((stepValA.toLongOrNull() ?: 400L).coerceAtLeast(30L))
                                             }
                                             draftSteps = draftSteps + added
                                         },
@@ -865,6 +976,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                                 color = accent,
                                                 fontSize = 11.sp,
                                                 modifier = Modifier.clickable {
+                                                    buzz()
                                                     draftSteps = draftSteps.filterIndexed { i, _ -> i != idx }
                                                 }
                                             )
@@ -879,6 +991,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                         ) { Text("Abbrechen", color = TextDim) }
                                         Button(
                                             onClick = {
+                                                buzz()
                                                 val id = editingMacroId ?: "m_${System.currentTimeMillis()}"
                                                 val updated = CustomMacro(
                                                     id = id,
@@ -919,6 +1032,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                         }
                                         OutlinedButton(
                                             onClick = {
+                                                buzz()
                                                 macros = macros.filterNot { it.id == m.id }
                                                 statusMsg = "Macro gelöscht"
                                             },
@@ -944,7 +1058,7 @@ fun OverrideApp(activity: ComponentActivity) {
                     ) {
                         item {
                             SimpleCard(pad) {
-                                Text("Design & Extra-Features", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text("Design & Komfort", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                 Spacer(Modifier.height(10.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     AccentTheme.entries.forEach { theme ->
@@ -956,8 +1070,10 @@ fun OverrideApp(activity: ComponentActivity) {
                                                 .background(if (selected) theme.color.copy(alpha = 0.2f) else SoftBg)
                                                 .border(1.dp, if (selected) theme.color else LineColor, RoundedCornerShape(8.dp))
                                                 .clickable {
+                                                    buzz()
                                                     accentTheme = theme
                                                     statusMsg = "Akzent: ${theme.label}"
+                                                    syncOverlayNow()
                                                 }
                                                 .padding(vertical = 10.dp),
                                             contentAlignment = Alignment.Center
@@ -967,6 +1083,14 @@ fun OverrideApp(activity: ComponentActivity) {
                                     }
                                 }
                                 Spacer(Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Tastatur-/Touch-Vibration", color = TextLight, fontSize = 13.sp)
+                                    Switch(checked = hapticOn, onCheckedChange = { hapticOn = it }, colors = SwitchDefaults.colors(checkedTrackColor = accent))
+                                }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1011,6 +1135,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         IconButton(onClick = {
+                                            buzz()
                                             val launch = context.packageManager.getLaunchIntentForPackage(app.packageName)
                                             if (launch != null) {
                                                 context.startActivity(launch)
@@ -1020,6 +1145,7 @@ fun OverrideApp(activity: ComponentActivity) {
                                             Icon(Icons.Outlined.PlayArrow, contentDescription = "Starten", tint = accent)
                                         }
                                         IconButton(onClick = {
+                                            buzz()
                                             val del = Intent(Intent.ACTION_DELETE).apply {
                                                 data = Uri.parse("package:${app.packageName}")
                                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -1048,8 +1174,8 @@ private fun SimpleCard(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = CardBg,
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, LineColor.copy(alpha = 0.9f))
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, LineColor.copy(alpha = 0.85f))
     ) {
         Column(modifier = Modifier.padding(padding), content = content)
     }
