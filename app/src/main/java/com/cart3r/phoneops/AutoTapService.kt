@@ -2,7 +2,12 @@ package com.cart3r.phoneops
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Path
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
@@ -14,31 +19,66 @@ data class ClickPoint(
     val isSwipe: Boolean = false,
     val endX: Float? = null,
     val endY: Float? = null,
-    val swipeDurationMs: Long = 220L
+    val swipeDurationMs: Long = 200L
 )
 
 class AutoTapService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
-    private var loopRunnable: Runnable? = null
+    private var stepRunnable: Runnable? = null
+    private var onStateChange: ((running: Boolean, reason: String?) -> Unit)? = null
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                stopAutoTap(reason = "Bildschirm aus — gestoppt")
+            }
+        }
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         isServiceConnected = true
+        registerScreenReceiver()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
 
     override fun onInterrupt() {
-        stopAutoTap()
+        stopAutoTap(reason = "Dienst unterbrochen")
     }
 
     override fun onDestroy() {
-        stopAutoTap()
+        stopAutoTap(reason = "Dienst beendet")
+        unregisterScreenReceiverSafe()
         isServiceConnected = false
         instance = null
         super.onDestroy()
+    }
+
+    private fun registerScreenReceiver() {
+        try {
+            val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                registerReceiver(screenReceiver, filter)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun unregisterScreenReceiverSafe() {
+        try {
+            unregisterReceiver(screenReceiver)
+        } catch (_: Exception) {
+        }
+    }
+
+    fun setStateListener(listener: ((running: Boolean, reason: String?) -> Unit)?) {
+        onStateChange = listener
     }
 
     fun performPointGesture(
@@ -62,9 +102,9 @@ class AutoTapService : AccessibilityService() {
         }
 
         val duration = if (point.isSwipe) {
-            point.swipeDurationMs.coerceIn(70L, 2500L)
+            point.swipeDurationMs.coerceIn(70L, 2000L)
         } else {
-            tapDurationMs.coerceIn(15L, 400L)
+            tapDurationMs.coerceIn(15L, 250L)
         }
 
         val stroke = GestureDescription.StrokeDescription(path, 0L, duration)
@@ -92,11 +132,11 @@ class AutoTapService : AccessibilityService() {
         maxDurationMs: Long?,
         jitterPx: Int = 0,
         onStepTick: (totalActions: Int, activePointIndex: Int) -> Unit,
-        onFinished: () -> Unit
+        onFinished: (reason: String) -> Unit
     ) {
-        stopAutoTap()
+        stopAutoTap(reason = null)
         if (points.isEmpty()) {
-            onFinished()
+            handler.post { onFinished("Keine Punkte") }
             return
         }
 
@@ -105,29 +145,31 @@ class AutoTapService : AccessibilityService() {
         var completedCycles = 0
         var pointIdx = 0
         val startTime = System.currentTimeMillis()
-        val safeInterval = intervalMs.coerceAtLeast(25L)
+        val safeInterval = intervalMs.coerceAtLeast(30L)
 
-        val runner = object : Runnable {
+        val tickRunner = object : Runnable {
             override fun run() {
                 if (!isRunningAutoTap) return
+
                 val elapsed = System.currentTimeMillis() - startTime
                 if (maxCycles != null && completedCycles >= maxCycles) {
-                    stopAutoTap()
-                    handler.post(onFinished)
+                    stopAutoTap(reason = null)
+                    handler.post { onFinished("Zyklen beendet") }
                     return
                 }
                 if (maxDurationMs != null && elapsed >= maxDurationMs) {
-                    stopAutoTap()
-                    handler.post(onFinished)
+                    stopAutoTap(reason = null)
+                    handler.post { onFinished("Zeit abgelaufen") }
                     return
                 }
 
                 val currentPoint = points[pointIdx]
+                val currentIdx = pointIdx
                 totalActions += 1
-                val stepIndexForUi = pointIdx
+
                 performPointGesture(currentPoint, jitterPx = jitterPx) { _ ->
                     handler.post {
-                        if (isRunningAutoTap) onStepTick(totalActions, stepIndexForUi)
+                        if (isRunningAutoTap) onStepTick(totalActions, currentIdx)
                     }
                 }
 
@@ -138,25 +180,33 @@ class AutoTapService : AccessibilityService() {
                 }
 
                 if (maxCycles != null && completedCycles >= maxCycles) {
-                    stopAutoTap()
-                    handler.post(onFinished)
+                    stopAutoTap(reason = null)
+                    handler.post { onFinished("Zyklen beendet") }
                     return
                 }
 
-                handler.postDelayed(this, safeInterval)
+                if (isRunningAutoTap) {
+                    handler.postDelayed(this, safeInterval)
+                }
             }
         }
-        loopRunnable = runner
-        handler.post(runner)
+
+        stepRunnable = tickRunner
+        handler.post(tickRunner)
     }
 
-    fun stopAutoTap() {
+    fun stopAutoTap(reason: String? = null) {
+        val wasRunning = isRunningAutoTap
         isRunningAutoTap = false
-        loopRunnable?.let { handler.removeCallbacks(it) }
-        loopRunnable = null
+        stepRunnable?.let { handler.removeCallbacks(it) }
+        stepRunnable = null
+        if (wasRunning && reason != null) {
+            handler.post { onStateChange?.invoke(false, reason) }
+        }
     }
 
     fun lockScreenNow(): Boolean = try {
+        stopAutoTap(reason = null)
         performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
     } catch (_: Exception) {
         false
