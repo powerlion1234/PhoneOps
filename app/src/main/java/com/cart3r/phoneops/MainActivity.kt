@@ -9,6 +9,8 @@ import android.hardware.camera2.CameraManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -21,7 +23,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -30,42 +31,35 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
-private val BgObsidian = Color(0xFF050507)
-private val SurfaceCard = Color(0xFF0D0E12)
-private val SurfaceElevated = Color(0xFF14161D)
-private val CrimsonPrimary = Color(0xFFFF1E38)
-private val CrimsonDim = Color(0xFF4A0A14)
-private val CyanAccent = Color(0xFF00E5FF)
-private val TextPrimary = Color(0xFFF2F4F8)
-private val TextMuted = Color(0xFF7D8594)
-private val BorderSubtle = Color(0xFF222632)
+private val BgBlack = Color(0xFF060608)
+private val CardBg = Color(0xFF0F1116)
+private val SoftBg = Color(0xFF171A22)
+private val TextLight = Color(0xFFF3F5F8)
+private val TextDim = Color(0xFF8B93A3)
+private val LineColor = Color(0xFF232734)
 
-data class InstalledAppItem(
-    val name: String,
-    val packageName: String
-)
+enum class AccentTheme(val label: String, val color: Color) {
+    CRIMSON("Crimson", Color(0xFFFF1E38)),
+    CYAN("Cyan", Color(0xFF00D8FF)),
+    AMBER("Amber", Color(0xFFFFA000))
+}
 
-data class SystemWorkflow(
+data class AppEntry(val name: String, val packageName: String)
+
+data class MacroRoutine(
     val id: String,
-    val code: String,
-    val title: String,
-    val subtitle: String,
-    val steps: List<String>,
-    val icon: ImageVector,
-    val accent: Color
+    val name: String,
+    val summary: String,
+    val action: (Context, Boolean, (Boolean) -> Unit, (String) -> Unit) -> Unit
 )
 
 class MainActivity : ComponentActivity() {
@@ -73,185 +67,161 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            PhoneOpsApp()
+            OverrideApp()
         }
     }
 }
 
 @Composable
-fun PhoneOpsApp() {
+fun OverrideApp() {
     val context = LocalContext.current
-    var activeTab by remember { mutableIntStateOf(0) }
-    var searchQuery by remember { mutableStateOf("") }
-    var torchEnabled by remember { mutableStateOf(false) }
-    val logs = remember {
-        mutableStateListOf(
-            "[${nowTime()}] KERNEL BRIDGE READY // ANDROID API ${Build.VERSION.SDK_INT}",
-            "[${nowTime()}] PACKAGE ENUMERATOR & INTENT DISPATCHER ONLINE"
-        )
-    }
+    var tab by remember { mutableIntStateOf(0) }
+    var accentTheme by remember { mutableStateOf(AccentTheme.CRIMSON) }
+    var compactCards by remember { mutableStateOf(false) }
 
-    fun pushLog(entry: String) {
-        logs.add(0, "[${nowTime()}] $entry")
-        if (logs.size > 25) logs.removeAt(logs.lastIndex)
-    }
+    var torchOn by remember { mutableStateOf(false) }
+    var statusMsg by remember { mutableStateOf("Ready") }
 
-    val installedApps by remember {
-        mutableStateOf(loadUserApps(context))
-    }
+    // Auto-clicker state
+    var tapX by remember { mutableStateOf("540") }
+    var tapY by remember { mutableStateOf("1200") }
+    var intervalMs by remember { mutableStateOf("500") }
+    var infiniteLoop by remember { mutableStateOf(false) }
+    var repeatCount by remember { mutableStateOf("10") }
+    var tapCount by remember { mutableIntStateOf(0) }
+    var autoTapRunning by remember { mutableStateOf(false) }
 
-    val workflows = remember {
+    // App search state
+    var appQuery by remember { mutableStateOf("") }
+    val userApps = remember { loadApps(context) }
+
+    val accent = accentTheme.color
+    val pad = if (compactCards) 10.dp else 14.dp
+    val gap = if (compactCards) 8.dp else 12.dp
+
+    val macros = remember {
         listOf(
-            SystemWorkflow(
-                id = "wf_torch",
-                code = "HW-01",
-                title = "HARDWARE TORCH OVERRIDE",
-                subtitle = "Direct CameraManager LED state toggle",
-                steps = listOf("Query rear flash unit", "Invert torch state"),
-                icon = Icons.Outlined.FlashlightOn,
-                accent = CrimsonPrimary
-            ),
-            SystemWorkflow(
-                id = "wf_stealth",
-                code = "SYS-02",
-                title = "STEALTH & FOCUS LOCKDOWN",
-                subtitle = "Kill torch + open Do Not Disturb & Radio controls",
-                steps = listOf("Force torch OFF", "Open DND Access", "Open Wireless Settings"),
-                icon = Icons.Outlined.Shield,
-                accent = CyanAccent
-            ),
-            SystemWorkflow(
-                id = "wf_purge",
-                code = "CLN-03",
-                title = "STORAGE & CACHE PURGE",
-                subtitle = "Jump straight to disk analyzer & package manager",
-                steps = listOf("Launch Storage Manager", "Open Installed Apps"),
-                icon = Icons.Outlined.CleaningServices,
-                accent = CrimsonPrimary
-            ),
-            SystemWorkflow(
-                id = "wf_net",
-                code = "NET-04",
-                title = "NETWORK & BT MATRIX",
-                subtitle = "Rapid jump to Wi-Fi and Bluetooth hardware panels",
-                steps = listOf("Open Wi-Fi Panel", "Open Bluetooth Panel"),
-                icon = Icons.Outlined.WifiTethering,
-                accent = CyanAccent
-            ),
-            SystemWorkflow(
-                id = "wf_battery",
-                code = "PWR-05",
-                title = "POWER & BACKGROUND AUDIT",
-                subtitle = "Inspect unrestricted background drainers",
-                steps = listOf("Open Battery Optimization"),
-                icon = Icons.Outlined.Bolt,
-                accent = CrimsonPrimary
-            ),
-            SystemWorkflow(
-                id = "wf_dev",
-                code = "DEV-06",
-                title = "DEVELOPER & USB DEBUG",
-                subtitle = "Direct jump to Android Developer Options",
-                steps = listOf("Launch Developer Settings"),
-                icon = Icons.Outlined.Terminal,
-                accent = CyanAccent
-            )
+            MacroRoutine(
+                id = "m_night",
+                name = "Quick Lock & Torch Off",
+                summary = "Turns off flashlight and locks screen via Accessibility"
+            ) { ctx, currentTorch, setTorch, notify ->
+                if (currentTorch && setTorchState(ctx, false)) {
+                    setTorch(false)
+                }
+                val svc = AutoTapService.instance
+                if (svc != null && svc.lockScreenNow()) {
+                    notify("Locked screen")
+                } else {
+                    openAccessibilitySettings(ctx)
+                    notify("Enable Accessibility for screen lock")
+                }
+            },
+            MacroRoutine(
+                id = "m_wifi",
+                name = "Wi-Fi & Internet Panel",
+                summary = "Opens wireless settings quickly"
+            ) { ctx, _, _, notify ->
+                openSettingsAction(ctx, Settings.ACTION_WIFI_SETTINGS)
+                notify("Opened Wi-Fi settings")
+            },
+            MacroRoutine(
+                id = "m_cleaner",
+                name = "Storage Cleanup",
+                summary = "Opens device storage settings to free space"
+            ) { ctx, _, _, notify ->
+                openSettingsAction(ctx, Settings.ACTION_INTERNAL_STORAGE_SETTINGS)
+                notify("Opened Storage settings")
+            },
+            MacroRoutine(
+                id = "m_sound",
+                name = "Do Not Disturb Access",
+                summary = "Opens notification policy & sound controls"
+            ) { ctx, _, _, notify ->
+                openSettingsAction(ctx, Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+                notify("Opened Do Not Disturb settings")
+            }
         )
     }
 
-    val filteredApps = remember(searchQuery, installedApps) {
-        if (searchQuery.isBlank()) installedApps
-        else installedApps.filter {
-            it.name.contains(searchQuery, ignoreCase = true) ||
-                it.packageName.contains(searchQuery, ignoreCase = true)
+    val filteredApps = remember(appQuery, userApps) {
+        if (appQuery.isBlank()) userApps
+        else userApps.filter {
+            it.name.contains(appQuery, ignoreCase = true) ||
+                it.packageName.contains(appQuery, ignoreCase = true)
         }
     }
 
     Scaffold(
-        containerColor = BgObsidian,
+        containerColor = BgBlack,
         topBar = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(BgObsidian)
                     .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(
-                            text = "OVER // RIDE",
-                            color = TextPrimary,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Black,
-                            fontFamily = FontFamily.Monospace,
-                            letterSpacing = 2.sp
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(accent)
                         )
+                        Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "DEVICE EXECUTION & PACKAGE DECK",
-                            color = CrimsonPrimary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            letterSpacing = 1.sp
+                            text = "OVERRIDE",
+                            color = TextLight,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
-                    Surface(
-                        color = CrimsonDim.copy(alpha = 0.45f),
-                        shape = CutCornerShape(6.dp),
-                        border = BorderStroke(1.dp, CrimsonPrimary)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(7.dp)
-                                    .clip(CircleShape)
-                                    .background(CrimsonPrimary)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = "${installedApps.size} PKGS",
-                                color = TextPrimary,
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
+                    Text(
+                        text = statusMsg,
+                        color = accent,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 12.dp)
+                    )
                 }
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
 
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(SurfaceCard, RoundedCornerShape(8.dp))
-                        .border(1.dp, BorderSubtle, RoundedCornerShape(8.dp))
+                        .background(CardBg, RoundedCornerShape(10.dp))
+                        .border(1.dp, LineColor, RoundedCornerShape(10.dp))
                         .padding(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    TabPill(
-                        label = "WORKFLOWS",
-                        selected = activeTab == 0,
-                        modifier = Modifier.weight(1f)
-                    ) { activeTab = 0 }
-                    TabPill(
-                        label = "APP CONTROL (${installedApps.size})",
-                        selected = activeTab == 1,
-                        modifier = Modifier.weight(1f)
-                    ) { activeTab = 1 }
-                    TabPill(
-                        label = "TELEMETRY",
-                        selected = activeTab == 2,
-                        modifier = Modifier.weight(1f)
-                    ) { activeTab = 2 }
+                    val tabs = listOf("Home", "Auto Tap", "Macros", "Apps & UI")
+                    tabs.forEachIndexed { idx, title ->
+                        val active = tab == idx
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (active) accent else Color.Transparent)
+                                .clickable { tab = idx }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = title,
+                                color = if (active) Color.Black else TextDim,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -262,155 +232,349 @@ fun PhoneOpsApp() {
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp)
         ) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = SurfaceCard,
-                shape = RoundedCornerShape(8.dp),
-                border = BorderStroke(1.dp, BorderSubtle)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = ">",
-                        color = CrimsonPrimary,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 13.sp
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = logs.firstOrNull() ?: "IDLE",
-                        color = CyanAccent,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            when (activeTab) {
+            when (tab) {
                 0 -> {
                     LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(gap),
                         contentPadding = PaddingValues(bottom = 24.dp)
                     ) {
-                        items(workflows) { wf ->
-                            WorkflowCard(
-                                workflow = wf,
-                                activeState = if (wf.id == "wf_torch") torchEnabled else false,
-                                onExecute = {
-                                    executeWorkflow(
-                                        context = context,
-                                        workflow = wf,
-                                        currentTorch = torchEnabled,
-                                        onTorchChanged = { torchEnabled = it },
-                                        onLog = ::pushLog
-                                    )
+                        item {
+                            SimpleCard(accent, pad) {
+                                Text("Quick Controls", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Spacer(Modifier.height(4.dp))
+                                Text("One-tap toggles and system shortcuts.", color = TextDim, fontSize = 13.sp)
+                                Spacer(Modifier.height(12.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    ActionPill(
+                                        text = if (torchOn) "Flashlight: ON" else "Flashlight: OFF",
+                                        active = torchOn,
+                                        accent = accent,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        val next = !torchOn
+                                        if (setTorchState(context, next)) {
+                                            torchOn = next
+                                            statusMsg = if (next) "Flashlight on" else "Flashlight off"
+                                        } else {
+                                            statusMsg = "No flash available"
+                                        }
+                                    }
+                                    ActionPill(
+                                        text = "Accessibility",
+                                        active = AutoTapService.isServiceConnected,
+                                        accent = accent,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        openAccessibilitySettings(context)
+                                        statusMsg = "Opened Accessibility settings"
+                                    }
                                 }
-                            )
+                            }
+                        }
+
+                        items(macros, key = { it.id }) { macro ->
+                            SimpleCard(accent, pad) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                        Text(macro.name, color = TextLight, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                                        Text(macro.summary, color = TextDim, fontSize = 12.sp)
+                                    }
+                                    Button(
+                                        onClick = {
+                                            macro.action(context, torchOn, { torchOn = it }) { statusMsg = it }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.Black),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text("Run", fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
                 1 -> {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = {
-                            Text(
-                                "Filter by app name or package ID...",
-                                color = TextMuted,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(Icons.Outlined.Search, contentDescription = null, tint = CrimsonPrimary)
-                        },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Outlined.Close, contentDescription = null, tint = TextMuted)
-                                }
-                            }
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = CrimsonPrimary,
-                            unfocusedBorderColor = BorderSubtle,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary,
-                            cursorColor = CrimsonPrimary,
-                            focusedContainerColor = SurfaceCard,
-                            unfocusedContainerColor = SurfaceCard
-                        ),
-                        shape = RoundedCornerShape(8.dp)
-                    )
-
-                    Spacer(Modifier.height(10.dp))
-
+                    val connected = AutoTapService.isServiceConnected
                     LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(gap),
                         contentPadding = PaddingValues(bottom = 24.dp)
                     ) {
-                        items(filteredApps, key = { it.packageName }) { app ->
-                            AppControlRow(
-                                app = app,
-                                onLaunch = {
-                                    val launchIntent = context.packageManager.getLaunchIntentForPackage(app.packageName)
-                                    if (launchIntent != null) {
-                                        context.startActivity(launchIntent)
-                                        pushLog("EXEC LAUNCH -> ${app.packageName}")
-                                    } else {
-                                        pushLog("NO LAUNCHER ACTIVITY -> ${app.packageName}")
+                        item {
+                            SimpleCard(accent, pad) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Auto Clicker", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        Text(
+                                            text = if (connected) "Accessibility active • Taps sent: $tapCount" else "Turn on Accessibility Service to tap screen",
+                                            color = if (connected) accent else TextDim,
+                                            fontSize = 12.sp
+                                        )
                                     }
-                                },
-                                onAppInfo = {
-                                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                        data = Uri.parse("package:${app.packageName}")
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    if (!connected) {
+                                        OutlinedButton(
+                                            onClick = { openAccessibilitySettings(context) },
+                                            border = BorderStroke(1.dp, accent)
+                                        ) {
+                                            Text("Enable", color = accent)
+                                        }
                                     }
-                                    context.startActivity(intent)
-                                    pushLog("OPEN INSPECTOR -> ${app.packageName}")
-                                },
-                                onUninstall = {
-                                    val deleteIntent = Intent(Intent.ACTION_DELETE).apply {
-                                        data = Uri.parse("package:${app.packageName}")
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(deleteIntent)
-                                    pushLog("DISPATCH UNINSTALL -> ${app.packageName}")
                                 }
-                            )
+
+                                Spacer(Modifier.height(12.dp))
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    OutlinedTextField(
+                                        value = tapX,
+                                        onValueChange = { tapX = it.filter { ch -> ch.isDigit() } },
+                                        label = { Text("X (px)", color = TextDim) },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f),
+                                        colors = fieldColors(accent)
+                                    )
+                                    OutlinedTextField(
+                                        value = tapY,
+                                        onValueChange = { tapY = it.filter { ch -> ch.isDigit() } },
+                                        label = { Text("Y (px)", color = TextDim) },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f),
+                                        colors = fieldColors(accent)
+                                    )
+                                }
+
+                                Spacer(Modifier.height(10.dp))
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    OutlinedTextField(
+                                        value = intervalMs,
+                                        onValueChange = { intervalMs = it.filter { ch -> ch.isDigit() } },
+                                        label = { Text("Delay (ms)", color = TextDim) },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f),
+                                        colors = fieldColors(accent)
+                                    )
+                                    OutlinedTextField(
+                                        value = repeatCount,
+                                        onValueChange = { repeatCount = it.filter { ch -> ch.isDigit() } },
+                                        enabled = !infiniteLoop,
+                                        label = { Text("Taps", color = TextDim) },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f),
+                                        colors = fieldColors(accent)
+                                    )
+                                }
+
+                                Spacer(Modifier.height(8.dp))
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Loop until stopped", color = TextLight, fontSize = 13.sp)
+                                    Switch(
+                                        checked = infiniteLoop,
+                                        onCheckedChange = { infiniteLoop = it },
+                                        colors = SwitchDefaults.colors(checkedTrackColor = accent)
+                                    )
+                                }
+
+                                Spacer(Modifier.height(10.dp))
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            val x = tapX.toFloatOrNull() ?: 540f
+                                            val y = tapY.toFloatOrNull() ?: 1200f
+                                            val svc = AutoTapService.instance
+                                            if (svc == null) {
+                                                openAccessibilitySettings(context)
+                                                statusMsg = "Enable Accessibility first"
+                                            } else {
+                                                Handler(Looper.getMainLooper()).postDelayed({
+                                                    svc.tapAt(x, y) { ok ->
+                                                        Handler(Looper.getMainLooper()).post {
+                                                            statusMsg = if (ok) "Test tap at ($x, $y)" else "Tap cancelled"
+                                                        }
+                                                    }
+                                                }, 1500L)
+                                                statusMsg = "Test tap in 1.5s..."
+                                            }
+                                        },
+                                        border = BorderStroke(1.dp, accent),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("Test (1.5s)", color = accent)
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            val svc = AutoTapService.instance
+                                            if (autoTapRunning) {
+                                                svc?.stopAutoTap()
+                                                autoTapRunning = false
+                                                statusMsg = "Auto tap stopped"
+                                            } else if (svc == null) {
+                                                openAccessibilitySettings(context)
+                                                statusMsg = "Enable Accessibility first"
+                                            } else {
+                                                val x = tapX.toFloatOrNull() ?: 540f
+                                                val y = tapY.toFloatOrNull() ?: 1200f
+                                                val delay = intervalMs.toLongOrNull() ?: 500L
+                                                val limit = if (infiniteLoop) null else (repeatCount.toIntOrNull() ?: 10)
+                                                tapCount = 0
+                                                autoTapRunning = true
+                                                statusMsg = "Auto tap running"
+                                                svc.startAutoTap(
+                                                    x = x,
+                                                    y = y,
+                                                    intervalMs = delay,
+                                                    maxCount = limit,
+                                                    onTick = { tapCount = it },
+                                                    onFinished = {
+                                                        autoTapRunning = false
+                                                        statusMsg = "Auto tap finished"
+                                                    }
+                                                )
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (autoTapRunning) Color(0xFF3A1016) else accent,
+                                            contentColor = if (autoTapRunning) TextLight else Color.Black
+                                        ),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(if (autoTapRunning) "Stop" else "Start", fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
                 2 -> {
                     LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(gap),
                         contentPadding = PaddingValues(bottom = 24.dp)
                     ) {
-                        items(logs) { line ->
-                            Surface(
+                        items(macros, key = { it.id }) { macro ->
+                            SimpleCard(accent, pad) {
+                                Text(macro.name, color = TextLight, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Spacer(Modifier.height(4.dp))
+                                Text(macro.summary, color = TextDim, fontSize = 13.sp)
+                                Spacer(Modifier.height(10.dp))
+                                Button(
+                                    onClick = {
+                                        macro.action(context, torchOn, { torchOn = it }) { statusMsg = it }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.Black),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Execute Macro", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                3 -> {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(gap),
+                        contentPadding = PaddingValues(bottom = 24.dp)
+                    ) {
+                        item {
+                            SimpleCard(accent, pad) {
+                                Text("Customize Appearance", color = TextLight, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Spacer(Modifier.height(10.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    AccentTheme.entries.forEach { theme ->
+                                        val selected = theme == accentTheme
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(if (selected) theme.color.copy(alpha = 0.2f) else SoftBg)
+                                                .border(1.dp, if (selected) theme.color else LineColor, RoundedCornerShape(8.dp))
+                                                .clickable {
+                                                    accentTheme = theme
+                                                    statusMsg = "Theme: ${theme.label}"
+                                                }
+                                                .padding(vertical = 10.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(theme.label, color = TextLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.height(10.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Compact cards", color = TextLight, fontSize = 13.sp)
+                                    Switch(
+                                        checked = compactCards,
+                                        onCheckedChange = { compactCards = it },
+                                        colors = SwitchDefaults.colors(checkedTrackColor = accent)
+                                    )
+                                }
+                            }
+                        }
+
+                        item {
+                            OutlinedTextField(
+                                value = appQuery,
+                                onValueChange = { appQuery = it },
+                                placeholder = { Text("Search installed apps...", color = TextDim) },
+                                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = accent) },
+                                singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
-                                color = SurfaceCard,
-                                shape = RoundedCornerShape(6.dp),
-                                border = BorderStroke(1.dp, BorderSubtle)
-                            ) {
-                                Text(
-                                    text = line,
-                                    color = TextPrimary,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp,
-                                    modifier = Modifier.padding(10.dp)
-                                )
+                                colors = fieldColors(accent)
+                            )
+                        }
+
+                        items(filteredApps, key = { it.packageName }) { app ->
+                            SimpleCard(accent, 10.dp) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                        Text(app.name, color = TextLight, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(app.packageName, color = TextDim, fontFamily = FontFamily.Monospace, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        IconButton(onClick = {
+                                            val launch = context.packageManager.getLaunchIntentForPackage(app.packageName)
+                                            if (launch != null) {
+                                                context.startActivity(launch)
+                                                statusMsg = "Opened ${app.name}"
+                                            }
+                                        }) {
+                                            Icon(Icons.Outlined.PlayArrow, contentDescription = "Open", tint = accent)
+                                        }
+                                        IconButton(onClick = {
+                                            val del = Intent(Intent.ACTION_DELETE).apply {
+                                                data = Uri.parse("package:${app.packageName}")
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                            context.startActivity(del)
+                                            statusMsg = "Uninstall ${app.name}"
+                                        }) {
+                                            Icon(Icons.Outlined.Delete, contentDescription = "Uninstall", tint = TextDim)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -421,295 +585,90 @@ fun PhoneOpsApp() {
 }
 
 @Composable
-private fun TabPill(
-    label: String,
-    selected: Boolean,
+private fun SimpleCard(
+    accent: Color,
+    padding: androidx.compose.ui.unit.Dp,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = CardBg,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, LineColor.copy(alpha = 0.9f))
+    ) {
+        Column(modifier = Modifier.padding(padding), content = content)
+    }
+}
+
+@Composable
+private fun ActionPill(
+    text: String,
+    active: Boolean,
+    accent: Color,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(if (selected) CrimsonPrimary else Color.Transparent)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (active) accent.copy(alpha = 0.2f) else SoftBg)
+            .border(1.dp, if (active) accent else LineColor, RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 9.dp),
+            .padding(vertical = 12.dp, horizontal = 10.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = label,
-            color = if (selected) Color.White else TextMuted,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-            fontSize = 11.sp
-        )
+        Text(text = text, color = TextLight, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
 @Composable
-private fun WorkflowCard(
-    workflow: SystemWorkflow,
-    activeState: Boolean,
-    onExecute: () -> Unit
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onExecute),
-        color = SurfaceCard,
-        shape = CutCornerShape(topStart = 12.dp, bottomEnd = 12.dp),
-        border = BorderStroke(
-            width = 1.dp,
-            brush = Brush.horizontalGradient(
-                listOf(workflow.accent.copy(alpha = 0.85f), BorderSubtle)
-            )
-        )
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(SurfaceElevated, RoundedCornerShape(8.dp))
-                            .border(1.dp, workflow.accent.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = workflow.icon,
-                            contentDescription = null,
-                            tint = workflow.accent,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "${workflow.code} // ${workflow.title}",
-                            color = TextPrimary,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
-                        )
-                        Text(
-                            text = workflow.subtitle,
-                            color = TextMuted,
-                            fontSize = 12.sp
-                        )
-                    }
-                }
+private fun fieldColors(accent: Color) = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor = accent,
+    unfocusedBorderColor = LineColor,
+    focusedTextColor = TextLight,
+    unfocusedTextColor = TextLight,
+    cursorColor = accent,
+    focusedContainerColor = CardBg,
+    unfocusedContainerColor = CardBg
+)
 
-                Surface(
-                    color = if (activeState) CrimsonPrimary else SurfaceElevated,
-                    shape = RoundedCornerShape(6.dp),
-                    border = BorderStroke(1.dp, workflow.accent)
-                ) {
-                    Text(
-                        text = if (activeState) "ACTIVE" else "RUN",
-                        color = TextPrimary,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(10.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                workflow.steps.forEachIndexed { idx, step ->
-                    Text(
-                        text = "${idx + 1}. $step",
-                        color = TextMuted,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
-                        modifier = Modifier
-                            .background(SurfaceElevated, RoundedCornerShape(4.dp))
-                            .padding(horizontal = 6.dp, vertical = 3.dp)
-                    )
-                }
-            }
-        }
-    }
+private fun openAccessibilitySettings(context: Context) {
+    context.startActivity(
+        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+    )
 }
 
-@Composable
-private fun AppControlRow(
-    app: InstalledAppItem,
-    onLaunch: () -> Unit,
-    onAppInfo: () -> Unit,
-    onUninstall: () -> Unit
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = SurfaceCard,
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, BorderSubtle)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                Text(
-                    text = app.name,
-                    color = TextPrimary,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = app.packageName,
-                    color = TextMuted,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                ActionIconButton(
-                    icon = Icons.Outlined.PlayArrow,
-                    tint = CyanAccent,
-                    onClick = onLaunch
-                )
-                ActionIconButton(
-                    icon = Icons.Outlined.Tune,
-                    tint = TextPrimary,
-                    onClick = onAppInfo
-                )
-                ActionIconButton(
-                    icon = Icons.Outlined.DeleteForever,
-                    tint = CrimsonPrimary,
-                    onClick = onUninstall
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ActionIconButton(
-    icon: ImageVector,
-    tint: Color,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .size(34.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(SurfaceElevated)
-            .border(1.dp, tint.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
-    }
-}
-
-private fun executeWorkflow(
-    context: Context,
-    workflow: SystemWorkflow,
-    currentTorch: Boolean,
-    onTorchChanged: (Boolean) -> Unit,
-    onLog: (String) -> Unit
-) {
-    when (workflow.id) {
-        "wf_torch" -> {
-            val next = !currentTorch
-            if (setTorchState(context, next)) {
-                onTorchChanged(next)
-                onLog("HW-01 TORCH -> ${if (next) "ENABLED" else "DISABLED"}")
-            } else {
-                onLog("HW-01 ERROR -> NO FLASH UNIT FOUND")
-            }
-        }
-
-        "wf_stealth" -> {
-            if (currentTorch && setTorchState(context, false)) {
-                onTorchChanged(false)
-            }
-            safeStartSettings(context, Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
-            onLog("SYS-02 STEALTH -> TORCH OFF + DND POLICY OPENED")
-        }
-
-        "wf_purge" -> {
-            val storageIntent = Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(storageIntent)
-            onLog("CLN-03 PURGE -> STORAGE & PACKAGE INSPECTOR OPENED")
-        }
-
-        "wf_net" -> {
-            safeStartSettings(context, Settings.ACTION_WIRELESS_SETTINGS)
-            onLog("NET-04 MATRIX -> WIRELESS & BT CONTROLS OPENED")
-        }
-
-        "wf_battery" -> {
-            safeStartSettings(context, Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-            onLog("PWR-05 AUDIT -> BATTERY OPTIMIZATION OPENED")
-        }
-
-        "wf_dev" -> {
-            safeStartSettings(context, Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
-            onLog("DEV-06 BRIDGE -> DEVELOPER OPTIONS OPENED")
-        }
+private fun openSettingsAction(context: Context, action: String) {
+    try {
+        context.startActivity(Intent(action).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+    } catch (_: Exception) {
+        context.startActivity(Intent(Settings.ACTION_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
     }
 }
 
 private fun setTorchState(context: Context, enabled: Boolean): Boolean {
     return try {
-        val camManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val cameraId = camManager.cameraIdList.firstOrNull { id ->
-            camManager.getCameraCharacteristics(id)
-                .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        val cam = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val id = cam.cameraIdList.firstOrNull {
+            cam.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
         } ?: return false
-        camManager.setTorchMode(cameraId, enabled)
+        cam.setTorchMode(id, enabled)
         true
     } catch (_: Exception) {
         false
     }
 }
 
-private fun safeStartSettings(context: Context, action: String) {
-    val intent = Intent(action).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-    try {
-        context.startActivity(intent)
-    } catch (_: Exception) {
-        context.startActivity(
-            Intent(Settings.ACTION_SETTINGS).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-        )
-    }
-}
-
-private fun loadUserApps(context: Context): List<InstalledAppItem> {
+private fun loadApps(context: Context): List<AppEntry> {
     val pm = context.packageManager
-    val packages = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    val pkgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
     } else {
         @Suppress("DEPRECATION")
         pm.getInstalledApplications(0)
     }
-    return packages
+    return pkgs
         .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 && it.packageName != context.packageName }
-        .map {
-            InstalledAppItem(
-                name = pm.getApplicationLabel(it).toString(),
-                packageName = it.packageName
-            )
-        }
+        .map { AppEntry(pm.getApplicationLabel(it).toString(), it.packageName) }
         .sortedBy { it.name.lowercase(Locale.getDefault()) }
 }
-
-private fun nowTime(): String = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-
