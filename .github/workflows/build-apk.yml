@@ -34,6 +34,25 @@ jobs:
           gradle wrapper --gradle-version 8.7 --no-daemon
           ./gradlew assembleDebug --no-daemon
 
+      - name: Decode Keystore and Sign APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | tr -d '\n\r ' | base64 -d > release-keystore.jks
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          APK_PATH=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks release-keystore.jks \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "env:KEYSTORE_PASSWORD" \
+            --key-pass "env:KEY_PASSWORD" \
+            "$APK_PATH"
+          "$BUILD_TOOLS/apksigner" verify "$APK_PATH"
+          rm -f release-keystore.jks
+
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
